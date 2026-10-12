@@ -1,0 +1,194 @@
+import { unlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  DEFAULT_CONFIG,
+  EXTENSION_ID,
+  getGlobalConfigPath,
+  getProjectConfigPath,
+  loadConfig,
+  normalizeConfig,
+  type ColGrepConfig,
+} from "#src/lib/config";
+
+function expectedConfig(overrides: {
+  indexOnStartup?: boolean;
+  guard?: Partial<ColGrepConfig["guard"]>;
+  agent?: Partial<ColGrepConfig["agent"]>;
+} = {}): ColGrepConfig {
+  return {
+    indexOnStartup: overrides.indexOnStartup ?? true,
+    guard: { ...DEFAULT_CONFIG.guard, ...overrides.guard },
+    agent: { ...DEFAULT_CONFIG.agent, ...overrides.agent },
+  };
+}
+
+describe("getGlobalConfigPath", () => {
+  it("constructs the expected global path", () => {
+    expect(getGlobalConfigPath("/home/user/.pi")).toBe(
+      `/home/user/.pi/extensions/${EXTENSION_ID}/config.json`,
+    );
+  });
+});
+
+describe("getProjectConfigPath", () => {
+  it("constructs the expected project path", () => {
+    expect(getProjectConfigPath("/my/project")).toBe(
+      `/my/project/.pi/extensions/${EXTENSION_ID}/config.json`,
+    );
+  });
+});
+
+describe("normalizeConfig", () => {
+  it("returns empty config for non-object input", () => {
+    expect(normalizeConfig(null)).toEqual({});
+    expect(normalizeConfig("string")).toEqual({});
+    expect(normalizeConfig(42)).toEqual({});
+    expect(normalizeConfig([])).toEqual({});
+  });
+
+  it("returns empty config when nothing is present", () => {
+    expect(normalizeConfig({})).toEqual({});
+  });
+
+  it("accepts a boolean indexOnStartup", () => {
+    expect(normalizeConfig({ indexOnStartup: true })).toEqual({
+      indexOnStartup: true,
+    });
+    expect(normalizeConfig({ indexOnStartup: false })).toEqual({
+      indexOnStartup: false,
+    });
+  });
+
+  it("ignores non-boolean indexOnStartup values", () => {
+    expect(normalizeConfig({ indexOnStartup: "yes" })).toEqual({});
+    expect(normalizeConfig({ indexOnStartup: 1 })).toEqual({});
+    expect(normalizeConfig({ indexOnStartup: null })).toEqual({});
+  });
+
+  it("accepts a valid guard section", () => {
+    expect(
+      normalizeConfig({ guard: { mode: "strict", allowGitGrep: false } }),
+    ).toEqual({ guard: { mode: "strict", allowGitGrep: false } });
+  });
+
+  it("drops invalid guard fields", () => {
+    expect(normalizeConfig({ guard: { mode: "nope" } })).toEqual({});
+    expect(normalizeConfig({ guard: { allowGitGrep: "yes" } })).toEqual({});
+    expect(normalizeConfig({ guard: "strict" })).toEqual({});
+  });
+
+  it("accepts a valid agent section", () => {
+    expect(
+      normalizeConfig({
+        agent: { enabled: false, timeoutMs: 120_000, maxConcurrent: 2 },
+      }),
+    ).toEqual({ agent: { enabled: false, timeoutMs: 120_000, maxConcurrent: 2 } });
+  });
+
+  it("clamps agent values and drops invalid ones", () => {
+    expect(normalizeConfig({ agent: { timeoutMs: 100 } })).toEqual({});
+    expect(normalizeConfig({ agent: { maxConcurrent: 0 } })).toEqual({});
+    expect(normalizeConfig({ agent: { maxConcurrent: 99 } })).toEqual({
+      agent: { maxConcurrent: 8 },
+    });
+    expect(normalizeConfig({ agent: { enabled: "yes" } })).toEqual({});
+  });
+
+  it("ignores unknown keys", () => {
+    expect(
+      normalizeConfig({ indexOnStartup: false, unknown: true }),
+    ).toEqual({ indexOnStartup: false });
+  });
+});
+
+describe("loadConfig", () => {
+  const tmpFiles: string[] = [];
+
+  function writeTmp(content: string): string {
+    const path = join(
+      tmpdir(),
+      `pi-colgrep-test-${Date.now()}-${Math.random()}.json`,
+    );
+    writeFileSync(path, content);
+    tmpFiles.push(path);
+    return path;
+  }
+
+  afterEach(() => {
+    for (const f of tmpFiles) {
+      try {
+        unlinkSync(f);
+      } catch {}
+    }
+    tmpFiles.length = 0;
+  });
+
+  it("returns defaults when both files are missing", () => {
+    expect(
+      loadConfig({
+        globalConfigPath: "/nonexistent/global.json",
+        projectConfigPath: "/nonexistent/project.json",
+      }),
+    ).toEqual(expectedConfig());
+  });
+
+  it("honors an explicit indexOnStartup: false from the global file", () => {
+    const global = writeTmp(JSON.stringify({ indexOnStartup: false }));
+    expect(
+      loadConfig({
+        globalConfigPath: global,
+        projectConfigPath: "/nonexistent/project.json",
+      }),
+    ).toEqual(expectedConfig({ indexOnStartup: false }));
+  });
+
+  it("lets the project file override the global file", () => {
+    const global = writeTmp(JSON.stringify({ indexOnStartup: true }));
+    const project = writeTmp(JSON.stringify({ indexOnStartup: false }));
+    expect(
+      loadConfig({ globalConfigPath: global, projectConfigPath: project }),
+    ).toEqual(expectedConfig({ indexOnStartup: false }));
+  });
+
+  it("merges guard sections field by field", () => {
+    const global = writeTmp(
+      JSON.stringify({ guard: { mode: "strict", allowGitGrep: false } }),
+    );
+    const project = writeTmp(JSON.stringify({ guard: { mode: "off" } }));
+    expect(
+      loadConfig({ globalConfigPath: global, projectConfigPath: project }),
+    ).toEqual(
+      expectedConfig({ guard: { mode: "off", allowGitGrep: false } }),
+    );
+  });
+
+  it("merges agent sections field by field", () => {
+    const global = writeTmp(
+      JSON.stringify({ agent: { enabled: false, maxConcurrent: 3 } }),
+    );
+    const project = writeTmp(JSON.stringify({ agent: { timeoutMs: 60_000 } }));
+    expect(
+      loadConfig({ globalConfigPath: global, projectConfigPath: project }),
+    ).toEqual(
+      expectedConfig({
+        agent: { enabled: false, maxConcurrent: 3, timeoutMs: 60_000 },
+      }),
+    );
+  });
+
+  it("warns and uses defaults when a file contains malformed JSON", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const global = writeTmp("not valid json {{{");
+    expect(
+      loadConfig({
+        globalConfigPath: global,
+        projectConfigPath: "/nonexistent/project.json",
+      }),
+    ).toEqual(expectedConfig());
+    expect(warn).toHaveBeenCalledOnce();
+    expect(warn.mock.calls[0]?.[0]).toContain("[pi-colgrep]");
+    warn.mockRestore();
+  });
+});
