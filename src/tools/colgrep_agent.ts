@@ -30,6 +30,7 @@ import {
 } from "#src/lib/agent";
 import type { AvailabilityState } from "#src/lib/availability";
 import type { Exec } from "#src/lib/exec";
+import { isUnsafeIndexRoot, unsafeRootMessage } from "#src/lib/paths";
 import type { SlotRunner } from "#src/lib/slots";
 import { err, ok, previewBlock } from "#src/tool-result";
 
@@ -93,6 +94,10 @@ export async function executeColGrepAgent(
 
   if (deps.availability.available === false) {
     return err(agentUnavailableMessage());
+  }
+
+  if (isUnsafeIndexRoot(cwd)) {
+    return err(unsafeRootMessage(cwd));
   }
 
   if (deps.isModelInstalled() === false) {

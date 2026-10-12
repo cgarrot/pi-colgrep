@@ -17,8 +17,9 @@ vi.mock("node:fs/promises", () => ({
   writeFile: mockWriteFile,
 }));
 vi.mock("node:os", () => ({
-  default: { tmpdir: mockTmpdir },
+  default: { tmpdir: mockTmpdir, homedir: () => "/Users/test" },
   tmpdir: mockTmpdir,
+  homedir: () => "/Users/test",
 }));
 
 // ---- tests ----
@@ -412,6 +413,21 @@ describe("executeColGrepSearch — index idle wait", () => {  it("awaits waitFor
     );
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain("capacity");
+    expect(exec).not.toHaveBeenCalled();
+  });
+
+  it("refuses to search unsafe roots (home directory, root)", async () => {
+    const availability = createAvailabilityState();
+    availability.available = true;
+    const exec = vi.fn<Exec>();
+    const result = await executeColGrepSearch(
+      { query: "auth" },
+      { exec, availability },
+      "/",
+      undefined,
+    );
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("home directory");
     expect(exec).not.toHaveBeenCalled();
   });
 });

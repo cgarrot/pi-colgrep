@@ -3,6 +3,7 @@ import {
   isRecoverableIndexError,
   recoverCorruptedIndex,
 } from "./index-recovery";
+import { checkIndexExists } from "./index-status";
 import type { SlotRunner } from "./slots";
 
 export type ReindexStatusCallback = (status: string | undefined) => void;
@@ -31,8 +32,10 @@ export interface Reindexer {
    * Run a reindex immediately, bypassing debounce. Resolves when complete.
    * `options.waitMs` overrides how long to wait for a machine-wide slot;
    * when no slot is acquired in time the run is skipped.
+   * `options.skipIfExists` re-probes the index after the slot is acquired
+   * and skips the build when another session already built it (swarm dedup).
    */
-  runNow(options?: { waitMs?: number }): Promise<void>;
+  runNow(options?: { waitMs?: number; skipIfExists?: boolean }): Promise<void>;
   /** Cancel pending timers and wait for any in-flight reindex to finish. */
   shutdown(): Promise<void>;
   /** Resolves when the current in-flight run (if any) completes. */
@@ -60,7 +63,10 @@ export function createReindexer(deps: ReindexerDeps): Reindexer {
   let isShutdown = false;
   let inflightPromise: Promise<void> | undefined;
 
-  async function runReindex(waitMs?: number): Promise<void> {
+  async function runReindex(
+    waitMs?: number,
+    skipIfExists?: boolean,
+  ): Promise<void> {
     inFlight = true;
     onStatus(INDEXING_STATUS);
     let failed = false;
@@ -82,6 +88,14 @@ export function createReindexer(deps: ReindexerDeps): Reindexer {
     };
 
     const doRun = async (): Promise<void> => {
+      if (skipIfExists) {
+        // Swarm dedup: while we queued for the slot, another session may have
+        // built this project's index already — skip the redundant build.
+        if (await checkIndexExists(exec, cwd)) {
+          skipped = true;
+          return;
+        }
+      }
       let result = await attempt();
       failed = !result.ok;
       if (result.ok || !isRecoverableIndexError(result.output)) return;
@@ -122,7 +136,7 @@ export function createReindexer(deps: ReindexerDeps): Reindexer {
     // the next edit schedules again.
     if (queued && !isShutdown && !skipped) {
       queued = false;
-      inflightPromise = runReindex(waitMs);
+      inflightPromise = runReindex(waitMs, skipIfExists);
     }
   }
 
@@ -131,17 +145,17 @@ export function createReindexer(deps: ReindexerDeps): Reindexer {
   // the in-flight promise instead of launching a second `colgrep init`.
   // `runReindex()` sets `inFlight` synchronously before its first await, so the
   // guard is race-free against another synchronous caller.
-  function startRun(waitMs?: number): Promise<void> {
+  function startRun(waitMs?: number, skipIfExists?: boolean): Promise<void> {
     if (inFlight && inflightPromise !== undefined) {
       return inflightPromise;
     }
-    inflightPromise = runReindex(waitMs);
+    inflightPromise = runReindex(waitMs, skipIfExists);
     return inflightPromise;
   }
 
   return {
-    runNow(options?: { waitMs?: number }): Promise<void> {
-      return startRun(options?.waitMs);
+    runNow(options?: { waitMs?: number; skipIfExists?: boolean }): Promise<void> {
+      return startRun(options?.waitMs, options?.skipIfExists);
     },
     whenIdle(): Promise<void> {
       return inflightPromise ?? Promise.resolve();

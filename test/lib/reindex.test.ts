@@ -639,3 +639,51 @@ describe("createReindexer — corrupted index self-heal", () => {
     expect(exec).toHaveBeenCalledTimes(1);
   });
 });
+
+// ---- skipIfExists (swarm dedup) ----
+
+describe("createReindexer — skipIfExists", () => {
+  it("skips the build when the index appeared while queued", async () => {
+    const exec = makeExec();
+    exec.mockResolvedValue({
+      stdout: "Project: /p\nModel: m\nIndex:   /tmp/idx\n",
+      stderr: "",
+      code: 0,
+    });
+    const reindexer = createReindexer({
+      exec,
+      cwd: "/project",
+      onStatus: makeOnStatus(),
+    });
+    await reindexer.runNow({ skipIfExists: true });
+    // Only the status probe ran; no build.
+    expect(exec).toHaveBeenCalledTimes(1);
+    expect(exec).toHaveBeenCalledWith(
+      "colgrep",
+      ["status", "/project", "--color", "never"],
+      expect.objectContaining({ cwd: "/project" }),
+    );
+  });
+
+  it("builds when the index is still missing", async () => {
+    const exec = makeExec();
+    exec.mockImplementation((_cmd, args) =>
+      Promise.resolve(
+        args[0] === "status"
+          ? { stdout: "No index found for /project", stderr: "", code: 0 }
+          : { stdout: "", stderr: "", code: 0 },
+      ),
+    );
+    const reindexer = createReindexer({
+      exec,
+      cwd: "/project",
+      onStatus: makeOnStatus(),
+    });
+    await reindexer.runNow({ skipIfExists: true });
+    expect(exec).toHaveBeenCalledWith(
+      "colgrep",
+      ["init", "-y", "."],
+      expect.objectContaining({ cwd: "/project" }),
+    );
+  });
+});

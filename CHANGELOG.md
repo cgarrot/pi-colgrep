@@ -1,5 +1,16 @@
 # Changelog
 
+## 3.4.2 — unsafe-root guard & swarm dedup
+
+- Never auto-index or search the home directory, its parent, or `/` (a session
+  launched from `$HOME` silently tried to index the whole machine).
+  Extension startup, post-edit reindex, `/colgrep-reindex`, and both tools
+  refuse with a clear message.
+- Startup reindex re-probes the index after acquiring the machine-wide slot
+  (`skipIfExists`): a swarm queued on the same repo no longer rebuilds what
+  the first session just built.
+- +9 tests (250 total).
+
 ## 3.4.1 — corrupted-index self-heal
 
 - Interrupted builds (timeout, session end, machine pressure) leave partial

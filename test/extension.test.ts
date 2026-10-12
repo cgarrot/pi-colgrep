@@ -48,6 +48,17 @@ vi.mock("#src/lib/stats", () => ({
   formatStatsSummary: vi.fn(() => "ColGrep adoption: mock summary"),
 }));
 
+// The machine-wide slot limiters use real lock files in the agent dir, which
+// would leak across tests sharing one process. Pass-through mocks instead.
+vi.mock("#src/lib/slots", () => ({
+  createSlotLimiter: vi.fn(() => ({
+    acquire: vi.fn(async () => ({ release: vi.fn() })),
+  })),
+  createSlotRunner: vi.fn(
+    () => async (fn: () => Promise<unknown>) => fn(),
+  ),
+}));
+
 function sessionConfig(
   overrides: {
     indexOnStartup?: boolean;

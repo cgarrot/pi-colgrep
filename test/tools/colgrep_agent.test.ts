@@ -20,8 +20,9 @@ vi.mock("node:fs/promises", () => ({
   writeFile: mockWriteFile,
 }));
 vi.mock("node:os", () => ({
-  default: { tmpdir: mockTmpdir },
+  default: { tmpdir: mockTmpdir, homedir: () => "/Users/test" },
   tmpdir: mockTmpdir,
+  homedir: () => "/Users/test",
 }));
 
 // ---- fixtures ----
@@ -233,6 +234,18 @@ describe("executeColGrepAgent", () => {
     );
     expect(order).toEqual(["idle", "exec"]);
     expect(result.isError).toBe(false);
+  });
+
+  it("refuses unsafe roots (home directory, root)", async () => {
+    const result = await executeColGrepAgent(
+      { question: "q" },
+      makeDeps(exec),
+      "/",
+      undefined,
+    );
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("home directory");
+    expect(exec).not.toHaveBeenCalled();
   });
 });
 

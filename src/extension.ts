@@ -12,6 +12,7 @@ import {
 } from "./lib/config";
 import { classifyBashCommand } from "./lib/guard";
 import { checkIndexExists } from "./lib/index-status";
+import { isUnsafeIndexRoot, unsafeRootMessage } from "./lib/paths";
 import { createReindexer, type Reindexer } from "./lib/reindex";
 import { createSlotLimiter, createSlotRunner } from "./lib/slots";
 import {
@@ -45,6 +46,8 @@ export default function piColGrepExtension(pi: ExtensionAPI): void {
   let indexExists = false;
   // Limits the "no index, skipping" notice to one per session.
   let skipWarned = false;
+  // True when the session cwd must never be indexed (home directory, root).
+  let unsafeRoot = false;
   // Session-scoped config (guard + agent settings), read by the tool_call
   // guard and the colgrep_agent tool.
   let sessionConfig: ColGrepConfig | undefined;
@@ -132,6 +135,11 @@ export default function piColGrepExtension(pi: ExtensionAPI): void {
     });
     sessionConfig = config;
 
+    unsafeRoot = isUnsafeIndexRoot(ctx.cwd);
+    if (unsafeRoot) {
+      ctx.ui.notify(unsafeRootMessage(ctx.cwd), "info");
+    }
+
     // Fast, offline probe (HF cache size check — no subprocess, no agent run).
     agentModelInstalled = await isAgentModelInstalled();
     if (!agentModelInstalled && config.agent.enabled) {
@@ -154,11 +162,13 @@ export default function piColGrepExtension(pi: ExtensionAPI): void {
     guardBlockCounts.clear();
     indexExists = await checkIndexExists(exec, ctx.cwd);
 
-    if (config.indexOnStartup && !indexExists) {
+    if (config.indexOnStartup && !indexExists && !unsafeRoot) {
       // First time only: when an index already exists, skip the startup build
       // (searches auto-update modified files). This avoids reindex storms
-      // when several agents share the same large directory.
-      void reindexer.runNow({ waitMs: 300_000 });
+      // when several agents share the same large directory. `skipIfExists`
+      // re-probes after the slot is acquired, so a swarm queued on the same
+      // repo does not rebuild what the first session just built.
+      void reindexer.runNow({ waitMs: 300_000, skipIfExists: true });
       indexExists = true;
     }
   });
@@ -199,6 +209,7 @@ export default function piColGrepExtension(pi: ExtensionAPI): void {
 
     if (event.isError) return;
     if (event.toolName !== "write" && event.toolName !== "edit") return;
+    if (unsafeRoot) return;
     if (!indexExists) {
       if (!skipWarned) {
         skipWarned = true;
@@ -217,6 +228,7 @@ export default function piColGrepExtension(pi: ExtensionAPI): void {
     await reindexer?.shutdown();
     reindexer = undefined;
     sessionConfig = undefined;
+    unsafeRoot = false;
     guardBlockCounts.clear();
   });
 
@@ -228,6 +240,11 @@ export default function piColGrepExtension(pi: ExtensionAPI): void {
           "colgrep is not installed. Install from: https://github.com/lightonai/next-plaid#installation",
           "warning",
         );
+        return;
+      }
+
+      if (unsafeRoot) {
+        ctx.ui.notify(unsafeRootMessage(ctx.cwd), "warning");
         return;
       }
 

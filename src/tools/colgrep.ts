@@ -20,6 +20,7 @@ import {
   isRecoverableIndexError,
   recoverCorruptedIndex,
 } from "#src/lib/index-recovery";
+import { isUnsafeIndexRoot, unsafeRootMessage } from "#src/lib/paths";
 import { runSearch } from "#src/lib/search";
 import type { SlotRunner } from "#src/lib/slots";
 import { err, ok, previewBlock } from "#src/tool-result";
@@ -60,6 +61,10 @@ export async function executeColGrepSearch(
       "colgrep is not installed or not available.\n" +
         "Install it from: https://github.com/lightonai/next-plaid#installation",
     );
+  }
+
+  if (isUnsafeIndexRoot(cwd)) {
+    return err(unsafeRootMessage(cwd));
   }
 
   if (!params.query && !params.regex) {
