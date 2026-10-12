@@ -404,3 +404,34 @@ describe("colgrep_agent renderResult", () => {
     expect(text).not.toContain("ctrl+o");
   });
 });
+
+// ---- machine-wide agent slot ----
+
+describe("registerColGrepAgent — machine-wide slot", () => {
+  it("returns a busy error when the agent slot is taken", async () => {
+    const { pi, tools } = capturePi();
+    const exec = vi.fn<Exec>();
+    const availability = createAvailabilityState();
+    availability.available = true;
+    registerColGrepAgent(pi, {
+      exec,
+      availability,
+      isModelInstalled: () => true,
+      isEnabled: () => true,
+      maxConcurrent: () => 1,
+      timeoutMs: () => 300_000,
+      withAgentSlot: async <T,>() => undefined,
+    });
+
+    const result = await tools[0].execute(
+      "1",
+      { question: "a" },
+      undefined,
+      undefined,
+      { cwd: "/repo" },
+    );
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("busy");
+    expect(exec).not.toHaveBeenCalled();
+  });
+});

@@ -344,8 +344,7 @@ describe("renderResult", () => {
 
 // ---- waitForIndexIdle ----
 
-describe("executeColGrepSearch — index idle wait", () => {
-  it("awaits waitForIndexIdle before searching", async () => {
+describe("executeColGrepSearch — index idle wait", () => {  it("awaits waitForIndexIdle before searching", async () => {
     const order: string[] = [];
     const availability = createAvailabilityState();
     availability.available = true;
@@ -369,5 +368,24 @@ describe("executeColGrepSearch — index idle wait", () => {
 
     expect(order).toEqual(["idle", "exec"]);
     expect(result.isError).toBe(false);
+  });
+
+  it("returns a capacity error when no machine-wide slot is available", async () => {
+    const availability = createAvailabilityState();
+    availability.available = true;
+    const exec = vi.fn<Exec>();
+    const result = await executeColGrepSearch(
+      { query: "auth" },
+      {
+        exec,
+        availability,
+        withSearchSlot: async <T,>() => undefined,
+      },
+      "/project",
+      undefined,
+    );
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("capacity");
+    expect(exec).not.toHaveBeenCalled();
   });
 });

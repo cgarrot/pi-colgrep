@@ -1,8 +1,10 @@
+import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { isAgentModelInstalled } from "./lib/agent";
 import { createAvailabilityState } from "./lib/availability";
 import {
+  DEFAULT_CONFIG,
   getGlobalConfigPath,
   getProjectConfigPath,
   loadConfig,
@@ -11,6 +13,7 @@ import {
 import { classifyBashCommand } from "./lib/guard";
 import { checkIndexExists } from "./lib/index-status";
 import { createReindexer, type Reindexer } from "./lib/reindex";
+import { createSlotLimiter, createSlotRunner } from "./lib/slots";
 import {
   formatStatsSummary,
   getStatsPath,
@@ -51,6 +54,42 @@ export default function piColGrepExtension(pi: ExtensionAPI): void {
   const guardBlockCounts = new Map<string, number>();
   // Shared adoption metrics across all sessions on this machine.
   const statsPath = getStatsPath(getAgentDir());
+  // Machine-wide concurrency protection (shared with every other Pi session
+  // on this machine via lock files): a mesh swarm must not launch N parallel
+  // searches, index builds, or ~4 GB agent runs at once.
+  const slotsDir = join(getAgentDir(), "extensions", "pi-colgrep", "slots");
+  const slotWaitMs = () =>
+    sessionConfig?.concurrency.waitMs ?? DEFAULT_CONFIG.concurrency.waitMs;
+  const withSearchSlot = createSlotRunner(
+    createSlotLimiter({
+      dir: slotsDir,
+      name: "search",
+      max: () =>
+        sessionConfig?.concurrency.searchMax ??
+        DEFAULT_CONFIG.concurrency.searchMax,
+    }),
+    slotWaitMs,
+  );
+  const withAgentSlot = createSlotRunner(
+    createSlotLimiter({
+      dir: slotsDir,
+      name: "agent",
+      max: () =>
+        sessionConfig?.concurrency.agentMax ??
+        DEFAULT_CONFIG.concurrency.agentMax,
+    }),
+    slotWaitMs,
+  );
+  const withInitSlot = createSlotRunner(
+    createSlotLimiter({
+      dir: slotsDir,
+      name: "init",
+      max: () =>
+        sessionConfig?.concurrency.initMax ??
+        DEFAULT_CONFIG.concurrency.initMax,
+    }),
+    slotWaitMs,
+  );
 
   const exec = (
     cmd: string,
@@ -62,6 +101,7 @@ export default function piColGrepExtension(pi: ExtensionAPI): void {
     exec,
     availability,
     waitForIndexIdle: () => reindexer?.whenIdle() ?? Promise.resolve(),
+    withSearchSlot,
   });
   registerColGrepAgent(pi, {
     exec,
@@ -71,6 +111,7 @@ export default function piColGrepExtension(pi: ExtensionAPI): void {
     maxConcurrent: () => sessionConfig?.agent.maxConcurrent ?? 1,
     timeoutMs: () => sessionConfig?.agent.timeoutMs,
     waitForIndexIdle: () => reindexer?.whenIdle() ?? Promise.resolve(),
+    withAgentSlot,
   });
 
   pi.on("session_start", async (_event, ctx) => {
@@ -105,6 +146,7 @@ export default function piColGrepExtension(pi: ExtensionAPI): void {
       exec,
       cwd: ctx.cwd,
       onStatus: (text) => setColGrepStatus(ctx, text),
+      withInitSlot,
     });
 
     skipWarned = false;
@@ -115,7 +157,7 @@ export default function piColGrepExtension(pi: ExtensionAPI): void {
       // First time only: when an index already exists, skip the startup build
       // (searches auto-update modified files). This avoids reindex storms
       // when several agents share the same large directory.
-      void reindexer.runNow();
+      void reindexer.runNow({ waitMs: 300_000 });
       indexExists = true;
     }
   });
@@ -196,9 +238,10 @@ export default function piColGrepExtension(pi: ExtensionAPI): void {
           exec,
           cwd: ctx.cwd,
           onStatus: (text) => setColGrepStatus(ctx, text),
+          withInitSlot,
         });
 
-      await indexer.runNow();
+      await indexer.runNow({ waitMs: 300_000 });
       // A manual reindex establishes an index, so resume write/edit reindexing.
       indexExists = true;
       ctx.ui.notify("ColGrep index updated.", "info");

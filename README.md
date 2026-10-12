@@ -109,9 +109,34 @@ Config files (project overrides global, per section):
     "enabled": true,               // expose the colgrep_agent tool
     "timeoutMs": 300000,           // per-run timeout
     "maxConcurrent": 1             // GPU-bound; keep at 1
+  },
+  "concurrency": {
+    "searchMax": 2,                // concurrent colgrep searches machine-wide
+    "agentMax": 1,                 // concurrent agent runs machine-wide (~4 GB RAM each)
+    "initMax": 1,                  // concurrent index builds machine-wide (CPU-heavy)
+    "waitMs": 60000                // how long an operation waits for a slot
   }
 }
 ```
+
+## Machine-wide concurrency protection
+
+Pi sessions are independent processes — with a mesh swarm, dozens of agents can
+run at once on one machine. Per-session counters cannot protect RAM/CPU, so the
+extension enforces **machine-wide slots** through lock files shared by all
+sessions (`<agentDir>/extensions/pi-colgrep/slots/`):
+
+- **searches**: `concurrency.searchMax` (default 2) — each search loads the
+  embedding model (~150 MB); bursts are queued (wait up to `waitMs`, then a
+  clear "at capacity" error the agent can retry).
+- **agent runs**: `concurrency.agentMax` (default 1) — the 2B GGUF costs
+  ~4 GB RAM per run; parallel runs would swap-thrash the machine.
+- **index builds**: `concurrency.initMax` (default 1) — parsing/embedding is
+  CPU-heavy; concurrent builds queue, and a debounced post-edit reindex that
+  cannot get a slot is skipped (searches auto-update the index anyway).
+
+Stale locks self-heal: a lock whose owner process died (session crash) or is
+older than 15 minutes is stolen, so a crashed agent can never wedge the machine.
 
 ## Commands
 

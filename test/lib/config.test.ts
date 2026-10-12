@@ -16,11 +16,13 @@ function expectedConfig(overrides: {
   indexOnStartup?: boolean;
   guard?: Partial<ColGrepConfig["guard"]>;
   agent?: Partial<ColGrepConfig["agent"]>;
+  concurrency?: Partial<ColGrepConfig["concurrency"]>;
 } = {}): ColGrepConfig {
   return {
     indexOnStartup: overrides.indexOnStartup ?? true,
     guard: { ...DEFAULT_CONFIG.guard, ...overrides.guard },
     agent: { ...DEFAULT_CONFIG.agent, ...overrides.agent },
+    concurrency: { ...DEFAULT_CONFIG.concurrency, ...overrides.concurrency },
   };
 }
 
@@ -85,6 +87,20 @@ describe("normalizeConfig", () => {
         agent: { enabled: false, timeoutMs: 120_000, maxConcurrent: 2 },
       }),
     ).toEqual({ agent: { enabled: false, timeoutMs: 120_000, maxConcurrent: 2 } });
+  });
+
+  it("accepts a valid concurrency section and clamps values", () => {
+    expect(
+      normalizeConfig({
+        concurrency: { searchMax: 3, agentMax: 1, initMax: 1, waitMs: 30_000 },
+      }),
+    ).toEqual({
+      concurrency: { searchMax: 3, agentMax: 1, initMax: 1, waitMs: 30_000 },
+    });
+    expect(normalizeConfig({ concurrency: { searchMax: 99 } })).toEqual({
+      concurrency: { searchMax: 16 },
+    });
+    expect(normalizeConfig({ concurrency: { waitMs: 10 } })).toEqual({});
   });
 
   it("clamps agent values and drops invalid ones", () => {
@@ -174,6 +190,20 @@ describe("loadConfig", () => {
     ).toEqual(
       expectedConfig({
         agent: { enabled: false, maxConcurrent: 3, timeoutMs: 60_000 },
+      }),
+    );
+  });
+
+  it("merges concurrency sections field by field", () => {
+    const global = writeTmp(JSON.stringify({ concurrency: { searchMax: 4 } }));
+    const project = writeTmp(
+      JSON.stringify({ concurrency: { agentMax: 2, waitMs: 10_000 } }),
+    );
+    expect(
+      loadConfig({ globalConfigPath: global, projectConfigPath: project }),
+    ).toEqual(
+      expectedConfig({
+        concurrency: { searchMax: 4, agentMax: 2, waitMs: 10_000 },
       }),
     );
   });

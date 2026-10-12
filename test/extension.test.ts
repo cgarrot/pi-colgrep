@@ -19,6 +19,7 @@ const { loadConfig } = vi.hoisted(() => ({
     indexOnStartup: true,
     guard: { mode: "off", allowGitGrep: true },
     agent: { enabled: true, timeoutMs: 300_000, maxConcurrent: 1 },
+    concurrency: { searchMax: 2, agentMax: 1, initMax: 1, waitMs: 60_000 },
   })),
 }));
 
@@ -52,6 +53,7 @@ function sessionConfig(
     indexOnStartup?: boolean;
     guard?: Partial<ColGrepConfig["guard"]>;
     agent?: Partial<ColGrepConfig["agent"]>;
+    concurrency?: Partial<ColGrepConfig["concurrency"]>;
   } = {},
 ): ColGrepConfig {
   return {
@@ -62,6 +64,13 @@ function sessionConfig(
       timeoutMs: 300_000,
       maxConcurrent: 1,
       ...overrides.agent,
+    },
+    concurrency: {
+      searchMax: 2,
+      agentMax: 1,
+      initMax: 1,
+      waitMs: 60_000,
+      ...overrides.concurrency,
     },
   };
 }

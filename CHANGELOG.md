@@ -1,5 +1,18 @@
 # Changelog
 
+## 3.4.0 — machine-wide concurrency protection
+
+- **Slot limiter across all Pi sessions** (lock files in
+  `<agentDir>/extensions/pi-colgrep/slots/`), because a mesh swarm runs many
+  independent Pi processes where per-session counters protect nothing:
+  - searches: max 2 concurrent (~150 MB each), queued with a bounded wait;
+  - agent runs: max 1 concurrent (~4 GB RAM each — prevents swap-thrash);
+  - index builds: max 1 concurrent (CPU-heavy); debounced post-edit reindexes
+    skip when no slot is free instead of stacking builds.
+- New `concurrency` config section (`searchMax`, `agentMax`, `initMax`,
+  `waitMs`); stale locks self-heal (dead PID or >15 min).
+- +14 tests (227 total).
+
 ## 3.3.1 — search timeout safety net
 
 - Every search exec is now capped at 180 s (runaway auto-index guard):

@@ -30,6 +30,7 @@ import {
 } from "#src/lib/agent";
 import type { AvailabilityState } from "#src/lib/availability";
 import type { Exec } from "#src/lib/exec";
+import type { SlotRunner } from "#src/lib/slots";
 import { err, ok, previewBlock } from "#src/tool-result";
 
 export interface ColGrepAgentDetails {
@@ -145,6 +146,8 @@ export interface RegisterColGrepAgentDeps {
   timeoutMs: () => number | undefined;
   /** Awaited before running: joins an in-flight reindex in this session. */
   waitForIndexIdle?: () => Promise<void>;
+  /** Machine-wide agent slot (2B model ≈ 4 GB per run, shared across sessions). */
+  withAgentSlot?: SlotRunner;
 }
 
 export function registerColGrepAgent(
@@ -209,7 +212,17 @@ export function registerColGrepAgent(
       }
       inFlight += 1;
       try {
-        return await executeColGrepAgent(params, deps, ctx.cwd, signal);
+        const run = () => executeColGrepAgent(params, deps, ctx.cwd, signal);
+        const result = deps.withAgentSlot
+          ? await deps.withAgentSlot(run)
+          : await run();
+        if (result === undefined) {
+          return err(
+            "The local colgrep agent is busy: another run is in progress on " +
+              "this machine. Retry in a moment.",
+          );
+        }
+        return result;
       } finally {
         inFlight -= 1;
       }

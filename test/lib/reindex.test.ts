@@ -502,6 +502,47 @@ describe("createReindexer — runNow() coalescing & in-flight tracking", () => {
   });
 });
 
+// ---- machine-wide init slot ----
+
+describe("createReindexer — machine-wide init slot", () => {
+  it("skips the run when no init slot is available", async () => {
+    const exec = makeExec();
+    exec.mockResolvedValue({ stdout: "", stderr: "", code: 0 });
+    const onStatus = makeOnStatus();
+    const reindexer = createReindexer({
+      exec,
+      cwd: "/project",
+      onStatus,
+      withInitSlot: async <T,>() => undefined,
+    });
+    await reindexer.runNow();
+    expect(exec).not.toHaveBeenCalled();
+    expect(onStatus).toHaveBeenCalledWith(undefined);
+  });
+
+  it("runs inside the init slot when available", async () => {
+    const exec = makeExec();
+    exec.mockResolvedValue({ stdout: "", stderr: "", code: 0 });
+    let used = false;
+    const reindexer = createReindexer({
+      exec,
+      cwd: "/project",
+      onStatus: makeOnStatus(),
+      withInitSlot: async <T,>(fn: () => Promise<T>) => {
+        used = true;
+        return fn();
+      },
+    });
+    await reindexer.runNow({ waitMs: 1_234 });
+    expect(used).toBe(true);
+    expect(exec).toHaveBeenCalledWith(
+      "colgrep",
+      ["init", "-y", "."],
+      expect.objectContaining({ cwd: "/project" }),
+    );
+  });
+});
+
 // ---- whenIdle() ----
 
 describe("createReindexer — whenIdle()", () => {

@@ -17,6 +17,7 @@ import type { SearchParams } from "#src/lib/args";
 import type { AvailabilityState } from "#src/lib/availability";
 import type { Exec } from "#src/lib/exec";
 import { runSearch } from "#src/lib/search";
+import type { SlotRunner } from "#src/lib/slots";
 import { err, ok, previewBlock } from "#src/tool-result";
 
 export interface ColGrepToolDetails {
@@ -30,6 +31,8 @@ export interface ColGrepExecuteDeps {
   availability: AvailabilityState;
   /** Awaited before searching: joins an in-flight reindex in this session. */
   waitForIndexIdle?: () => Promise<void>;
+  /** Machine-wide search slot (shared across all Pi sessions). */
+  withSearchSlot?: SlotRunner;
   /** Override default truncation line limit. Used in tests. */
   maxLines?: number;
   /** Override default truncation byte limit. Used in tests. */
@@ -63,7 +66,17 @@ export async function executeColGrepSearch(
     await deps.waitForIndexIdle();
   }
 
-  const searchResult = await runSearch(deps.exec, params, cwd, signal);
+  const searchResult = deps.withSearchSlot
+    ? await deps.withSearchSlot(() => runSearch(deps.exec, params, cwd, signal))
+    : await runSearch(deps.exec, params, cwd, signal);
+
+  if (searchResult === undefined) {
+    return err(
+      "colgrep is at capacity (machine-wide search limit reached). " +
+        "Retry in a moment.",
+    );
+  }
+
   if (searchResult.error) {
     return err(searchResult.error);
   }
@@ -96,6 +109,8 @@ export interface RegisterColGrepDeps {
   availability: AvailabilityState;
   /** Awaited before searching: joins an in-flight reindex in this session. */
   waitForIndexIdle?: () => Promise<void>;
+  /** Machine-wide search slot (shared across all Pi sessions). */
+  withSearchSlot?: SlotRunner;
 }
 
 export function registerColGrep(

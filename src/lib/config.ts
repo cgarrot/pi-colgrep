@@ -31,6 +31,17 @@ export interface AgentConfig {
   maxConcurrent: number;
 }
 
+export interface ConcurrencyConfig {
+  /** Max concurrent colgrep searches machine-wide (default 2). */
+  searchMax: number;
+  /** Max concurrent colgrep_agent runs machine-wide (default 1, ~4 GB each). */
+  agentMax: number;
+  /** Max concurrent index builds machine-wide (default 1, CPU-heavy). */
+  initMax: number;
+  /** How long an operation waits for a free slot before giving up (default 60 s). */
+  waitMs: number;
+}
+
 export interface ColGrepConfig {
   /** Whether to build the semantic index in the background on session start. */
   indexOnStartup: boolean;
@@ -38,12 +49,15 @@ export interface ColGrepConfig {
   guard: GuardConfig;
   /** colgrep_agent (delegated code localization) settings. */
   agent: AgentConfig;
+  /** Machine-wide concurrency limits (shared across all Pi sessions). */
+  concurrency: ConcurrencyConfig;
 }
 
 export type ColGrepConfigPartial = {
   indexOnStartup?: boolean;
   guard?: Partial<GuardConfig>;
   agent?: Partial<AgentConfig>;
+  concurrency?: Partial<ConcurrencyConfig>;
 };
 
 export const DEFAULT_CONFIG: ColGrepConfig = {
@@ -56,6 +70,12 @@ export const DEFAULT_CONFIG: ColGrepConfig = {
     enabled: true,
     timeoutMs: 300_000,
     maxConcurrent: 1,
+  },
+  concurrency: {
+    searchMax: 2,
+    agentMax: 1,
+    initMax: 1,
+    waitMs: 60_000,
   },
 };
 
@@ -114,6 +134,25 @@ export function normalizeConfig(raw: unknown): ColGrepConfigPartial {
     if (Object.keys(normalized).length > 0) config.agent = normalized;
   }
 
+  const concurrency = record.concurrency;
+  if (concurrency && typeof concurrency === "object" && !Array.isArray(concurrency)) {
+    const c = concurrency as Record<string, unknown>;
+    const normalized: Partial<ConcurrencyConfig> = {};
+    const bounded = (value: unknown, min: number, max: number) =>
+      typeof value === "number" && Number.isFinite(value) && value >= min
+        ? Math.min(max, Math.floor(value))
+        : undefined;
+    const searchMax = bounded(c.searchMax, 1, 16);
+    const agentMax = bounded(c.agentMax, 1, 8);
+    const initMax = bounded(c.initMax, 1, 8);
+    const waitMs = bounded(c.waitMs, 1_000, 600_000);
+    if (searchMax !== undefined) normalized.searchMax = searchMax;
+    if (agentMax !== undefined) normalized.agentMax = agentMax;
+    if (initMax !== undefined) normalized.initMax = initMax;
+    if (waitMs !== undefined) normalized.waitMs = waitMs;
+    if (Object.keys(normalized).length > 0) config.concurrency = normalized;
+  }
+
   return config;
 }
 
@@ -150,6 +189,11 @@ export function loadConfig(options: {
       ...DEFAULT_CONFIG.agent,
       ...global.agent,
       ...project.agent,
+    },
+    concurrency: {
+      ...DEFAULT_CONFIG.concurrency,
+      ...global.concurrency,
+      ...project.concurrency,
     },
   };
 }

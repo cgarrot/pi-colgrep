@@ -1,4 +1,5 @@
 import type { Exec } from "./exec";
+import type { SlotRunner } from "./slots";
 
 export type ReindexStatusCallback = (status: string | undefined) => void;
 
@@ -10,13 +11,19 @@ export interface ReindexerDeps {
   debounceMs?: number;
   /** Exec timeout for the reindex command. Defaults to 300 000 ms (5 min). */
   timeoutMs?: number;
+  /** Machine-wide index-build slot (one build at a time across all sessions). */
+  withInitSlot?: SlotRunner;
 }
 
 export interface Reindexer {
   /** Schedule a debounced reindex. Safe to call repeatedly. */
   schedule(): void;
-  /** Run a reindex immediately, bypassing debounce. Resolves when complete. */
-  runNow(): Promise<void>;
+  /**
+   * Run a reindex immediately, bypassing debounce. Resolves when complete.
+   * `options.waitMs` overrides how long to wait for a machine-wide slot;
+   * when no slot is acquired in time the run is skipped.
+   */
+  runNow(options?: { waitMs?: number }): Promise<void>;
   /** Cancel pending timers and wait for any in-flight reindex to finish. */
   shutdown(): Promise<void>;
   /** Resolves when the current in-flight run (if any) completes. */
@@ -30,7 +37,7 @@ const QUEUED_STATUS = "colgrep: indexing\u2026 (queued updates)";
 const INDEXING_FAILED_STATUS = "colgrep: indexing failed";
 
 export function createReindexer(deps: ReindexerDeps): Reindexer {
-  const { exec, cwd, onStatus } = deps;
+  const { exec, cwd, onStatus, withInitSlot } = deps;
   const timeoutMs = deps.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const debounceMs = deps.debounceMs ?? DEFAULT_DEBOUNCE_MS;
 
@@ -40,11 +47,13 @@ export function createReindexer(deps: ReindexerDeps): Reindexer {
   let isShutdown = false;
   let inflightPromise: Promise<void> | undefined;
 
-  async function runReindex(): Promise<void> {
+  async function runReindex(waitMs?: number): Promise<void> {
     inFlight = true;
     onStatus(INDEXING_STATUS);
     let failed = false;
-    try {
+    let skipped = false;
+
+    const doRun = async (): Promise<void> => {
       const result = await exec("colgrep", ["init", "-y", "."], {
         cwd,
         timeout: timeoutMs,
@@ -55,6 +64,17 @@ export function createReindexer(deps: ReindexerDeps): Reindexer {
         console.error(
           `colgrep reindex failed: ${detail || `exit code ${result.code}`}`,
         );
+      }
+    };
+
+    try {
+      if (withInitSlot) {
+        // One index build at a time machine-wide: when another session is
+        // already building, skip instead of stacking CPU-heavy builds.
+        const ran = await withInitSlot(doRun, waitMs);
+        skipped = ran === undefined;
+      } else {
+        await doRun();
       }
     } catch (err) {
       failed = true;
@@ -68,10 +88,11 @@ export function createReindexer(deps: ReindexerDeps): Reindexer {
     inflightPromise = undefined;
 
     // Drain: if a reindex was queued while we were running, start it now
-    // (unless shut down in the meantime).
-    if (queued && !isShutdown) {
+    // (unless shut down in the meantime). A skipped run does not drain —
+    // the next edit schedules again.
+    if (queued && !isShutdown && !skipped) {
       queued = false;
-      inflightPromise = runReindex();
+      inflightPromise = runReindex(waitMs);
     }
   }
 
@@ -80,17 +101,17 @@ export function createReindexer(deps: ReindexerDeps): Reindexer {
   // the in-flight promise instead of launching a second `colgrep init`.
   // `runReindex()` sets `inFlight` synchronously before its first await, so the
   // guard is race-free against another synchronous caller.
-  function startRun(): Promise<void> {
+  function startRun(waitMs?: number): Promise<void> {
     if (inFlight && inflightPromise !== undefined) {
       return inflightPromise;
     }
-    inflightPromise = runReindex();
+    inflightPromise = runReindex(waitMs);
     return inflightPromise;
   }
 
   return {
-    runNow(): Promise<void> {
-      return startRun();
+    runNow(options?: { waitMs?: number }): Promise<void> {
+      return startRun(options?.waitMs);
     },
     whenIdle(): Promise<void> {
       return inflightPromise ?? Promise.resolve();
