@@ -297,3 +297,88 @@ describe("registerColGrepAgent", () => {
     expect(third.content[0].text).not.toContain("already in progress");
   });
 });
+
+// ---- renderResult ----
+
+interface RenderableTool {
+  renderResult: (
+    result: unknown,
+    options: { expanded: boolean; isPartial: boolean },
+    theme: unknown,
+    context: { isError: boolean; lastComponent: unknown },
+  ) => unknown;
+}
+
+function captureAgentTool(): RenderableTool {
+  const { pi, tools } = capturePi();
+  registerColGrepAgent(pi, {
+    exec: vi.fn<Exec>(),
+    availability: createAvailabilityState(),
+    isModelInstalled: () => true,
+    isEnabled: () => true,
+    maxConcurrent: () => 1,
+    timeoutMs: () => 300_000,
+  });
+  return tools[0] as unknown as RenderableTool;
+}
+
+const stubTheme = {
+  fg: (color: string, text: string) => `<${color}>${text}`,
+};
+
+function renderAgent(result: unknown, options: { expanded: boolean }): string {
+  const setText = vi.fn<(text: string) => void>();
+  captureAgentTool().renderResult(
+    result,
+    { ...options, isPartial: false },
+    stubTheme,
+    { isError: false, lastComponent: { setText } },
+  );
+  return setText.mock.calls[0][0];
+}
+
+describe("colgrep_agent renderResult", () => {
+  const successResult = {
+    content: [
+      {
+        type: "text",
+        text: "src/a.ts:1-2\nsrc/b.ts:3-4\n\n[colgrep_agent: 2 locations · 4 turns · 1 search · 6.8s]",
+      },
+    ],
+    details: {
+      locationCount: 2,
+      turns: 4,
+      searches: 1,
+      seconds: 6.8,
+      truncated: false,
+    },
+  };
+
+  it("renders a collapsed summary with location preview and expand hint", () => {
+    const text = renderAgent(successResult, { expanded: false });
+    expect(text).toContain("2 locations");
+    expect(text).toContain("4 turns");
+    expect(text).toContain("src/a.ts:1-2");
+    expect(text).toContain("ctrl+o to expand");
+    expect(text).not.toContain("[colgrep_agent:");
+  });
+
+  it("renders the full output when expanded", () => {
+    const text = renderAgent(successResult, { expanded: true });
+    expect(text).toContain(
+      "[colgrep_agent: 2 locations · 4 turns · 1 search · 6.8s]",
+    );
+  });
+
+  it("renders no-locations without an expand hint", () => {
+    const text = renderAgent(
+      {
+        content: [{ type: "text", text: "No locations found." }],
+        details: { locationCount: 0 },
+      },
+      { expanded: false },
+    );
+    expect(text).toContain("no locations");
+    expect(text).not.toContain("ctrl+o");
+  });
+});

@@ -1,5 +1,13 @@
 # Changelog
 
+## 3.1.0 — collapsed-view previews
+
+- Collapsed tool results now show the first 3 returned lines plus a
+  `(ctrl+o to expand)` hint, so operators see what a tool actually returned at
+  a glance; `… +N more` marks longer lists and `(truncated)` marks capped output.
+- `colgrep_agent` uses the same preview and now follows the upstream
+  `lastComponent` render pattern.
+
 ## 3.0.0 — local fork
 
 Based on `@gotgenes/pi-colgrep` v2.0.0 (MIT, © Chris Lasher). Added:

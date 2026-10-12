@@ -291,6 +291,50 @@ describe("renderResult", () => {
     expect(text).not.toContain("<error>");
   });
 
+  it("renders a collapsed success with a preview and an expand hint", () => {
+    const text = render(
+      {
+        content: [
+          { type: "text", text: "a.ts:1\nb.ts:2\nc.ts:3\nd.ts:4\ne.ts:5" },
+        ],
+        details: { hitCount: 5, truncated: false },
+      },
+      { expanded: false },
+      false,
+    );
+    expect(text).toContain("5 hits");
+    expect(text).toContain("a.ts:1");
+    expect(text).toContain("c.ts:3");
+    expect(text).not.toContain("d.ts:4");
+    expect(text).toContain("+2 more");
+    expect(text).toContain("ctrl+o to expand");
+  });
+
+  it("marks truncated collapsed results", () => {
+    const text = render(
+      {
+        content: [{ type: "text", text: "a.ts:1" }],
+        details: { hitCount: 1, truncated: true },
+      },
+      { expanded: false },
+      false,
+    );
+    expect(text).toContain("truncated");
+  });
+
+  it("renders no-matches without an expand hint", () => {
+    const text = render(
+      {
+        content: [{ type: "text", text: "No matches found" }],
+        details: { hitCount: 0, truncated: false },
+      },
+      { expanded: false },
+      false,
+    );
+    expect(text).toContain("no matches");
+    expect(text).not.toContain("ctrl+o");
+  });
+
   it("renders an expanded error as the full error text", () => {
     const text = render(errorResult, { expanded: true }, true);
     expect(text).toContain("colgrep is not installed or not available.");

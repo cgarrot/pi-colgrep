@@ -30,7 +30,7 @@ import {
 } from "#src/lib/agent";
 import type { AvailabilityState } from "#src/lib/availability";
 import type { Exec } from "#src/lib/exec";
-import { err, ok } from "#src/tool-result";
+import { err, ok, previewBlock } from "#src/tool-result";
 
 export interface ColGrepAgentDetails {
   locationCount: number;
@@ -178,12 +178,11 @@ export function registerColGrepAgent(
     renderCall(args, theme) {
       return new Text(formatCall(args, theme), 0, 0);
     },
-    renderResult(result, options, theme) {
-      return new Text(
-        formatResult(result, options, theme),
-        0,
-        0,
-      );
+    renderResult(result, options, theme, context) {
+      const text =
+        (context.lastComponent as Text | undefined) ?? new Text("", 0, 0);
+      text.setText(formatResult(result, options, theme));
+      return text;
     },
     async execute(
       _toolCallId,
@@ -245,12 +244,25 @@ function formatResult(
 
   if (!options.expanded) {
     const count = details?.locationCount ?? 0;
+    const icon = theme.fg("success", "✓");
+    if (count === 0) {
+      return `${icon} ${theme.fg("muted", "no locations")}`;
+    }
     const metaText = formatMetaCompact(details);
-    const label =
-      count === 0
-        ? theme.fg("muted", "no locations")
-        : theme.fg("muted", `${count} location${count === 1 ? "" : "s"}${metaText}`);
-    return `${theme.fg("success", "✓")} ${label}`;
+    const truncated = details?.truncated
+      ? theme.fg("warning", " (truncated)")
+      : "";
+    const label = theme.fg(
+      "muted",
+      `${count} location${count === 1 ? "" : "s"}${metaText}`,
+    );
+    // Location lines are the content before the blank separator line.
+    const locationLines: string[] = [];
+    for (const line of outputText.split("\n")) {
+      if (line.trim() === "") break;
+      locationLines.push(line);
+    }
+    return `${icon} ${label}${truncated}${previewBlock(locationLines, theme)}`;
   }
 
   return outputText

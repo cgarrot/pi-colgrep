@@ -17,7 +17,7 @@ import type { SearchParams } from "#src/lib/args";
 import type { AvailabilityState } from "#src/lib/availability";
 import type { Exec } from "#src/lib/exec";
 import { runSearch } from "#src/lib/search";
-import { err, ok } from "#src/tool-result";
+import { err, ok, previewBlock } from "#src/tool-result";
 
 export interface ColGrepToolDetails {
   hitCount: number;
@@ -203,11 +203,18 @@ function formatResult(
 
   if (!options.expanded) {
     const icon = theme.fg("success", "✓");
-    const count =
-      hitCount === 0
-        ? theme.fg("muted", "no matches")
-        : theme.fg("muted", `${hitCount} hit${hitCount === 1 ? "" : "s"}`);
-    return `${icon} ${count}`;
+    if (hitCount === 0) {
+      return `${icon} ${theme.fg("muted", "no matches")}`;
+    }
+    const count = theme.fg(
+      "muted",
+      `${hitCount} hit${hitCount === 1 ? "" : "s"}`,
+    );
+    const truncated = details?.truncated
+      ? theme.fg("warning", " (truncated)")
+      : "";
+    const lines = outputText.split("\n").filter((line) => line !== "");
+    return `${icon} ${count}${truncated}${previewBlock(lines, theme)}`;
   }
 
   const lines = outputText
