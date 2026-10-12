@@ -116,6 +116,9 @@ Config files (project overrides global, per section):
     "initMax": 1,                  // concurrent index builds machine-wide (CPU-heavy)
     "waitMs": 60000,               // how long an operation waits for a slot
     "initTimeoutMs": 900000        // per-build exec timeout (15 min)
+  },
+  "indexing": {
+    "maxFiles": 20000              // never auto-index dirs with more files (0 = off)
   }
 }
 ```
@@ -161,6 +164,11 @@ prevents build stampedes.
   directory has **no index yet**; existing indexes are updated on demand by
   searches (modified files are detected automatically). This avoids reindex
   storms when several mesh/subagent sessions share a large directory.
+- **Size guard**: a *cold* build is refused when the directory exceeds
+  `indexing.maxFiles` files (default 20 000), counted with a bounded scan that
+  stops early. Searches there are refused with a "scope to a subdirectory"
+  hint instead of launching a multi-minute build. Per-project
+  `indexOnStartup: false` disables the startup build for a workspace entirely.
 - After each successful `write`/`edit`, a debounced reindex is scheduled — only
   when an index already exists for the directory.
 - A real search auto-indexes on demand regardless. While an index build is in
@@ -168,6 +176,9 @@ prevents build stampedes.
   (exponential backoff, up to 2 min) rather than failing and suggesting grep.
   Each search attempt is capped at **3 minutes** (runaway auto-index guard) —
   pathological directories (huge dump folders) cannot block a call forever.
+- While a build runs, a **widget above the editor** shows the live progress —
+  `colgrep: indexing zoma 42% (12,345/29,191)` — parsed from colgrep's PTY
+  progress bar; it disappears when the build ends.
 - Large directories with volatile content (e.g. `.mesh/`, `**/dbg*` dumps)
   should be added to colgrep's `extra_ignore` in
   `~/Library/Application Support/colgrep/config.json`.

@@ -56,6 +56,8 @@ export interface ColGrepAgentExecuteDeps {
   timeoutMs: () => number | undefined;
   /** Awaited before running: joins an in-flight reindex in this session. */
   waitForIndexIdle?: () => Promise<void>;
+  /** Cold-build size guard: returns a block reason for oversized dirs. */
+  preflightIndex?: (cwd: string) => Promise<string | undefined>;
   /** Override default truncation limits. Used in tests. */
   maxLines?: number;
   maxBytes?: number;
@@ -98,6 +100,11 @@ export async function executeColGrepAgent(
 
   if (isUnsafeIndexRoot(cwd)) {
     return err(unsafeRootMessage(cwd));
+  }
+
+  if (deps.preflightIndex) {
+    const blocked = await deps.preflightIndex(cwd);
+    if (blocked) return err(blocked);
   }
 
   if (deps.isModelInstalled() === false) {
@@ -153,6 +160,8 @@ export interface RegisterColGrepAgentDeps {
   waitForIndexIdle?: () => Promise<void>;
   /** Machine-wide agent slot (2B model ≈ 4 GB per run, shared across sessions). */
   withAgentSlot?: SlotRunner;
+  /** Cold-build size guard: returns a block reason for oversized dirs. */
+  preflightIndex?: (cwd: string) => Promise<string | undefined>;
 }
 
 export function registerColGrepAgent(

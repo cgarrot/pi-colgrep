@@ -1,8 +1,10 @@
-import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { basename, join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { isAgentModelInstalled } from "./lib/agent";
 import { createAvailabilityState } from "./lib/availability";
+import { runIndexBuild } from "./lib/builder";
 import {
   DEFAULT_CONFIG,
   getGlobalConfigPath,
@@ -11,6 +13,7 @@ import {
   type ColGrepConfig,
 } from "./lib/config";
 import { classifyBashCommand } from "./lib/guard";
+import { countFilesUpTo, exceedsCap, tooLargeMessage } from "./lib/index-size";
 import { checkIndexExists } from "./lib/index-status";
 import { isUnsafeIndexRoot, unsafeRootMessage } from "./lib/paths";
 import { createReindexer, type Reindexer } from "./lib/reindex";
@@ -24,15 +27,21 @@ import {
 import { registerColGrep } from "./tools/colgrep";
 import { registerColGrepAgent } from "./tools/colgrep_agent";
 
-const COLGREP_STATUS_KEY = "colgrep";
+const COLGREP_WIDGET_KEY = "colgrep-index";
 const AGENT_INSTALL_TIMEOUT_MS = 30 * 60 * 1000;
 
-function setColGrepStatus(
-  ctx: { ui: { setStatus?: (key: string, text: string | undefined) => void } },
-  text: string | undefined,
-): void {
-  if (typeof ctx.ui.setStatus === "function") {
-    ctx.ui.setStatus(COLGREP_STATUS_KEY, text);
+interface UiCtxLike {
+  cwd: string;
+  ui: {
+    notify: (message: string, type?: "error" | "warning" | "info") => void;
+    setWidget?: (key: string, lines: string[] | undefined) => void;
+  };
+}
+
+/** Indexing status lives in a widget above the editor, with live progress. */
+function setIndexWidget(ctx: UiCtxLike, lines: string[] | undefined): void {
+  if (typeof ctx.ui.setWidget === "function") {
+    ctx.ui.setWidget(COLGREP_WIDGET_KEY, lines);
   }
 }
 
@@ -100,11 +109,57 @@ export default function piColGrepExtension(pi: ExtensionAPI): void {
     opts?: { cwd?: string; timeout?: number; signal?: AbortSignal },
   ) => pi.exec(cmd, args, opts);
 
+  // Cold-build size guard: refuse to auto-index oversized directories.
+  const preflightIndex = async (cwd: string): Promise<string | undefined> => {
+    if (indexExists) return undefined;
+    const max =
+      sessionConfig?.indexing.maxFiles ?? DEFAULT_CONFIG.indexing.maxFiles;
+    if (max <= 0) return undefined;
+    const count = await countFilesUpTo(exec, cwd, max);
+    if (exceedsCap(count, max)) {
+      return tooLargeMessage(cwd, count ?? max + 1, max);
+    }
+    return undefined;
+  };
+
+  const buildReindexer = (ctx: UiCtxLike, config: ColGrepConfig): Reindexer =>
+    createReindexer({
+      exec,
+      cwd: ctx.cwd,
+      onStatus: (text) => setIndexWidget(ctx, text ? [text] : undefined),
+      withInitSlot,
+      timeoutMs: config.concurrency.initTimeoutMs,
+      maxIndexableFiles: () => config.indexing.maxFiles,
+      onTooLarge: (count, max) => {
+        setIndexWidget(ctx, undefined);
+        ctx.ui.notify(tooLargeMessage(ctx.cwd, count, max), "info");
+      },
+      builder: () =>
+        runIndexBuild({
+          cwd: ctx.cwd,
+          args: ["init", "-y", "."],
+          timeoutMs: config.concurrency.initTimeoutMs,
+          logPath: join(tmpdir(), `colgrep-build-${process.pid}.log`),
+          onProgress: ({ current, total, percent }) => {
+            const suffix =
+              percent !== undefined &&
+              current !== undefined &&
+              total !== undefined
+                ? `${percent}% (${current.toLocaleString("en-US")}/${total.toLocaleString("en-US")})`
+                : "…";
+            setIndexWidget(ctx, [
+              `colgrep: indexing ${basename(ctx.cwd)} ${suffix}`,
+            ]);
+          },
+        }),
+    });
+
   registerColGrep(pi, {
     exec,
     availability,
     waitForIndexIdle: () => reindexer?.whenIdle() ?? Promise.resolve(),
     withSearchSlot,
+    preflightIndex,
   });
   registerColGrepAgent(pi, {
     exec,
@@ -115,6 +170,7 @@ export default function piColGrepExtension(pi: ExtensionAPI): void {
     timeoutMs: () => sessionConfig?.agent.timeoutMs,
     waitForIndexIdle: () => reindexer?.whenIdle() ?? Promise.resolve(),
     withAgentSlot,
+    preflightIndex,
   });
 
   pi.on("session_start", async (_event, ctx) => {
@@ -150,13 +206,7 @@ export default function piColGrepExtension(pi: ExtensionAPI): void {
       );
     }
 
-    reindexer = createReindexer({
-      exec,
-      cwd: ctx.cwd,
-      onStatus: (text) => setColGrepStatus(ctx, text),
-      withInitSlot,
-      timeoutMs: config.concurrency.initTimeoutMs,
-    });
+    reindexer = buildReindexer(ctx, config);
 
     skipWarned = false;
     guardBlockCounts.clear();
@@ -202,9 +252,12 @@ export default function piColGrepExtension(pi: ExtensionAPI): void {
   pi.on("tool_result", (event, ctx) => {
     if (!event.isError && event.toolName === "colgrep") {
       recordStat(statsPath, "search");
+      // A successful search implies an index now exists (auto-built on demand).
+      indexExists = true;
     }
     if (!event.isError && event.toolName === "colgrep_agent") {
       recordStat(statsPath, "agent_run");
+      indexExists = true;
     }
 
     if (event.isError) return;
@@ -251,14 +304,7 @@ export default function piColGrepExtension(pi: ExtensionAPI): void {
       // Use the session reindexer if available; otherwise create a one-shot
       // one (e.g., if the command is invoked before session_start has run).
       const indexer =
-        reindexer ??
-        createReindexer({
-          exec,
-          cwd: ctx.cwd,
-          onStatus: (text) => setColGrepStatus(ctx, text),
-          withInitSlot,
-          timeoutMs: sessionConfig?.concurrency.initTimeoutMs,
-        });
+        reindexer ?? buildReindexer(ctx, sessionConfig ?? DEFAULT_CONFIG);
 
       await indexer.runNow({ waitMs: 300_000 });
       // A manual reindex establishes an index, so resume write/edit reindexing.
@@ -292,7 +338,7 @@ export default function piColGrepExtension(pi: ExtensionAPI): void {
           "The session stays usable; this runs in the background of the terminal.",
         "info",
       );
-      setColGrepStatus(ctx, "colgrep: agent install\u2026");
+      setIndexWidget(ctx, ["colgrep: agent install … (one-time, ~2.5 GB)"]);
 
       let succeeded = false;
       try {
@@ -312,7 +358,7 @@ export default function piColGrepExtension(pi: ExtensionAPI): void {
         const reason = err instanceof Error ? err.message : String(err);
         ctx.ui.notify(`colgrep: agent model install failed: ${reason}`, "error");
       } finally {
-        setColGrepStatus(ctx, undefined);
+        setIndexWidget(ctx, undefined);
       }
 
       if (succeeded) {

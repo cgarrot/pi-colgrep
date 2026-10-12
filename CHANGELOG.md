@@ -1,5 +1,18 @@
 # Changelog
 
+## 3.5.0 — index size guard + live progress widget
+
+- **Cold-build size guard**: directories with more than `indexing.maxFiles`
+  files (default 20 000) are never auto-indexed. The count is a bounded scan
+  (`find | head`) that stops early on huge trees; searches there are refused
+  with a "scope to a subdirectory" hint instead of launching a multi-minute
+  build. Post-edit reindexes of already-indexed directories are unaffected.
+- **Indexing progress moved to a widget above the editor** with a real
+  percentage: colgrep prints its progress bar only to a TTY, so builds run
+  under a pseudo-terminal (`script` on macOS) and `current/total` pairs are
+  parsed live — `colgrep: indexing zoma 42% (12,345/29,191)`.
+- Tests: +19 (269 total).
+
 ## 3.4.2 — unsafe-root guard & swarm dedup
 
 - Never auto-index or search the home directory, its parent, or `/` (a session

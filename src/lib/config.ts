@@ -44,6 +44,15 @@ export interface ConcurrencyConfig {
   initTimeoutMs: number;
 }
 
+export interface IndexingConfig {
+  /**
+   * Max files for automatic (cold) indexing, default 20 000. Directories with
+   * more files are never auto-indexed (searches there are refused with a
+   * scoped-subdirectory hint); 0 disables the guard.
+   */
+  maxFiles: number;
+}
+
 export interface ColGrepConfig {
   /** Whether to build the semantic index in the background on session start. */
   indexOnStartup: boolean;
@@ -53,6 +62,8 @@ export interface ColGrepConfig {
   agent: AgentConfig;
   /** Machine-wide concurrency limits (shared across all Pi sessions). */
   concurrency: ConcurrencyConfig;
+  /** Automatic-indexing size guard. */
+  indexing: IndexingConfig;
 }
 
 export type ColGrepConfigPartial = {
@@ -60,6 +71,7 @@ export type ColGrepConfigPartial = {
   guard?: Partial<GuardConfig>;
   agent?: Partial<AgentConfig>;
   concurrency?: Partial<ConcurrencyConfig>;
+  indexing?: Partial<IndexingConfig>;
 };
 
 export const DEFAULT_CONFIG: ColGrepConfig = {
@@ -79,6 +91,9 @@ export const DEFAULT_CONFIG: ColGrepConfig = {
     initMax: 1,
     waitMs: 60_000,
     initTimeoutMs: 900_000,
+  },
+  indexing: {
+    maxFiles: 20_000,
   },
 };
 
@@ -158,6 +173,20 @@ export function normalizeConfig(raw: unknown): ColGrepConfigPartial {
     if (Object.keys(normalized).length > 0) config.concurrency = normalized;
   }
 
+  const indexing = record.indexing;
+  if (indexing && typeof indexing === "object" && !Array.isArray(indexing)) {
+    const i = indexing as Record<string, unknown>;
+    const normalized: Partial<IndexingConfig> = {};
+    if (
+      typeof i.maxFiles === "number" &&
+      Number.isFinite(i.maxFiles) &&
+      i.maxFiles >= 0
+    ) {
+      normalized.maxFiles = Math.min(1_000_000, Math.floor(i.maxFiles));
+    }
+    if (Object.keys(normalized).length > 0) config.indexing = normalized;
+  }
+
   return config;
 }
 
@@ -199,6 +228,11 @@ export function loadConfig(options: {
       ...DEFAULT_CONFIG.concurrency,
       ...global.concurrency,
       ...project.concurrency,
+    },
+    indexing: {
+      ...DEFAULT_CONFIG.indexing,
+      ...global.indexing,
+      ...project.indexing,
     },
   };
 }

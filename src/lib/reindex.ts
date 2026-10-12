@@ -3,6 +3,7 @@ import {
   isRecoverableIndexError,
   recoverCorruptedIndex,
 } from "./index-recovery";
+import { countFilesUpTo, exceedsCap } from "./index-size";
 import { checkIndexExists } from "./index-status";
 import type { SlotRunner } from "./slots";
 
@@ -23,6 +24,15 @@ export interface ReindexerDeps {
    * index via `colgrep status` and removing it so a fresh build can run.
    */
   recoverIndex?: (output: string) => Promise<string | undefined>;
+  /**
+   * Optional progress-aware builder (production uses the PTY builder so the
+   * TUI can show a real percentage). Defaults to a plain `colgrep init` exec.
+   */
+  builder?: () => Promise<{ code: number; stdout: string; stderr: string }>;
+  /** Cap for cold builds (0 = disabled). Warm builds are never capped. */
+  maxIndexableFiles?: () => number;
+  /** Called when a cold build was skipped because the directory is too large. */
+  onTooLarge?: (count: number, max: number) => void;
 }
 
 export interface Reindexer {
@@ -73,13 +83,18 @@ export function createReindexer(deps: ReindexerDeps): Reindexer {
     let skipped = false;
 
     const attempt = async (): Promise<{ ok: boolean; output: string }> => {
-      const result = await exec("colgrep", ["init", "-y", "."], {
-        cwd,
-        timeout: timeoutMs,
-      });
+      const result = deps.builder
+        ? await deps.builder()
+        : await exec("colgrep", ["init", "-y", "."], {
+            cwd,
+            timeout: timeoutMs,
+          });
       const output = `${result.stdout}\n${result.stderr}`;
       if (result.code !== 0) {
-        const detail = result.stderr.trim();
+        const detail =
+          result.stderr.trim() ||
+          result.stdout.trim().split("\n").filter(Boolean).at(-1) ||
+          "";
         console.error(
           `colgrep reindex failed: ${detail || `exit code ${result.code}`}`,
         );
@@ -88,14 +103,32 @@ export function createReindexer(deps: ReindexerDeps): Reindexer {
     };
 
     const doRun = async (): Promise<void> => {
-      if (skipIfExists) {
-        // Swarm dedup: while we queued for the slot, another session may have
-        // built this project's index already — skip the redundant build.
-        if (await checkIndexExists(exec, cwd)) {
+      const needsProbe =
+        skipIfExists === true || deps.maxIndexableFiles !== undefined;
+      let hasIndex = false;
+      if (needsProbe) {
+        hasIndex = await checkIndexExists(exec, cwd);
+        if (skipIfExists && hasIndex) {
+          // Swarm dedup: while we queued for the slot, another session may
+          // have built this project's index already — skip the redundant build.
           skipped = true;
           return;
         }
       }
+
+      if (!hasIndex && deps.maxIndexableFiles) {
+        const max = deps.maxIndexableFiles();
+        if (max > 0) {
+          const count = await countFilesUpTo(exec, cwd, max);
+          if (exceedsCap(count, max)) {
+            // Cold build of an oversized directory: never do this automatically.
+            skipped = true;
+            deps.onTooLarge?.(count ?? max + 1, max);
+            return;
+          }
+        }
+      }
+
       let result = await attempt();
       failed = !result.ok;
       if (result.ok || !isRecoverableIndexError(result.output)) return;

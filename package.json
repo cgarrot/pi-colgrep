@@ -1,6 +1,6 @@
 {
   "name": "pi-colgrep",
-  "version": "3.4.2",
+  "version": "3.5.0",
   "description": "Pi extension: ColGrep semantic code search as agent tools, plus a delegated code-localization agent (colgrep --agent, local 2B model). Local fork of @gotgenes/pi-colgrep with colgrep-first guidance.",
   "type": "module",
   "imports": {

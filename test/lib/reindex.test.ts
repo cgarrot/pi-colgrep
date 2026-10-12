@@ -687,3 +687,86 @@ describe("createReindexer — skipIfExists", () => {
     );
   });
 });
+
+// ---- cold-build size guard ----
+
+describe("createReindexer — cold-build size guard", () => {
+  it("skips cold builds of oversized directories", async () => {
+    const exec = makeExec();
+    exec.mockImplementation((cmd, args) => {
+      if (args[0] === "status") {
+        return Promise.resolve({
+          stdout: "No index found for /project",
+          stderr: "",
+          code: 0,
+        });
+      }
+      if (cmd === "/bin/sh") {
+        return Promise.resolve({ stdout: "11\n", stderr: "", code: 0 });
+      }
+      return Promise.resolve({ stdout: "", stderr: "", code: 0 });
+    });
+    const onTooLarge = vi.fn();
+    const reindexer = createReindexer({
+      exec,
+      cwd: "/project",
+      onStatus: makeOnStatus(),
+      maxIndexableFiles: () => 10,
+      onTooLarge,
+    });
+    await reindexer.runNow();
+    expect(onTooLarge).toHaveBeenCalledWith(11, 10);
+    expect(exec).not.toHaveBeenCalledWith(
+      "colgrep",
+      ["init", "-y", "."],
+      expect.anything(),
+    );
+  });
+
+  it("builds when the directory is under the cap", async () => {
+    const exec = makeExec();
+    exec.mockImplementation((cmd, args) => {
+      if (args[0] === "status") {
+        return Promise.resolve({
+          stdout: "No index found for /project",
+          stderr: "",
+          code: 0,
+        });
+      }
+      if (cmd === "/bin/sh") {
+        return Promise.resolve({ stdout: "3\n", stderr: "", code: 0 });
+      }
+      return Promise.resolve({ stdout: "", stderr: "", code: 0 });
+    });
+    const reindexer = createReindexer({
+      exec,
+      cwd: "/project",
+      onStatus: makeOnStatus(),
+      maxIndexableFiles: () => 10,
+    });
+    await reindexer.runNow();
+    expect(exec).toHaveBeenCalledWith(
+      "colgrep",
+      ["init", "-y", "."],
+      expect.objectContaining({ cwd: "/project" }),
+    );
+  });
+
+  it("uses the injected builder when provided", async () => {
+    const exec = makeExec();
+    const builder = vi.fn(async () => ({
+      code: 0,
+      stdout: "Indexed /project",
+      stderr: "",
+    }));
+    const reindexer = createReindexer({
+      exec,
+      cwd: "/project",
+      onStatus: makeOnStatus(),
+      builder,
+    });
+    await reindexer.runNow();
+    expect(builder).toHaveBeenCalledOnce();
+    expect(exec).not.toHaveBeenCalled();
+  });
+});

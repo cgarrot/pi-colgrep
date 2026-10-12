@@ -40,6 +40,8 @@ export interface ColGrepExecuteDeps {
   withSearchSlot?: SlotRunner;
   /** Self-heal hook for corrupted indexes (tests); defaults to real recovery. */
   recoverIndex?: (exec: Exec, cwd: string) => Promise<string | undefined>;
+  /** Cold-build size guard: returns a block reason for oversized dirs. */
+  preflightIndex?: (cwd: string) => Promise<string | undefined>;
   /** Override default truncation line limit. Used in tests. */
   maxLines?: number;
   /** Override default truncation byte limit. Used in tests. */
@@ -65,6 +67,11 @@ export async function executeColGrepSearch(
 
   if (isUnsafeIndexRoot(cwd)) {
     return err(unsafeRootMessage(cwd));
+  }
+
+  if (deps.preflightIndex) {
+    const blocked = await deps.preflightIndex(cwd);
+    if (blocked) return err(blocked);
   }
 
   if (!params.query && !params.regex) {
@@ -142,6 +149,8 @@ export interface RegisterColGrepDeps {
   waitForIndexIdle?: () => Promise<void>;
   /** Machine-wide search slot (shared across all Pi sessions). */
   withSearchSlot?: SlotRunner;
+  /** Cold-build size guard: returns a block reason for oversized dirs. */
+  preflightIndex?: (cwd: string) => Promise<string | undefined>;
 }
 
 export function registerColGrep(

@@ -430,4 +430,23 @@ describe("executeColGrepSearch — index idle wait", () => {  it("awaits waitFor
     expect(result.content[0].text).toContain("home directory");
     expect(exec).not.toHaveBeenCalled();
   });
+
+  it("returns the preflight block reason for oversized directories", async () => {
+    const availability = createAvailabilityState();
+    availability.available = true;
+    const exec = vi.fn<Exec>();
+    const result = await executeColGrepSearch(
+      { query: "auth" },
+      {
+        exec,
+        availability,
+        preflightIndex: async () => "too large, scope to a subdirectory",
+      },
+      "/big",
+      undefined,
+    );
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("too large");
+    expect(exec).not.toHaveBeenCalled();
+  });
 });

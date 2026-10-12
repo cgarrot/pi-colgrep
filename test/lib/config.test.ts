@@ -17,12 +17,14 @@ function expectedConfig(overrides: {
   guard?: Partial<ColGrepConfig["guard"]>;
   agent?: Partial<ColGrepConfig["agent"]>;
   concurrency?: Partial<ColGrepConfig["concurrency"]>;
+  indexing?: Partial<ColGrepConfig["indexing"]>;
 } = {}): ColGrepConfig {
   return {
     indexOnStartup: overrides.indexOnStartup ?? true,
     guard: { ...DEFAULT_CONFIG.guard, ...overrides.guard },
     agent: { ...DEFAULT_CONFIG.agent, ...overrides.agent },
     concurrency: { ...DEFAULT_CONFIG.concurrency, ...overrides.concurrency },
+    indexing: { ...DEFAULT_CONFIG.indexing, ...overrides.indexing },
   };
 }
 
@@ -107,6 +109,17 @@ describe("normalizeConfig", () => {
     expect(normalizeConfig({ concurrency: { initTimeoutMs: 100 } })).toEqual(
       {},
     );
+  });
+
+  it("accepts an indexing section", () => {
+    expect(normalizeConfig({ indexing: { maxFiles: 5_000 } })).toEqual({
+      indexing: { maxFiles: 5_000 },
+    });
+    expect(normalizeConfig({ indexing: { maxFiles: 0 } })).toEqual({
+      indexing: { maxFiles: 0 },
+    });
+    expect(normalizeConfig({ indexing: { maxFiles: -1 } })).toEqual({});
+    expect(normalizeConfig({ indexing: { maxFiles: "lots" } })).toEqual({});
   });
 
   it("clamps agent values and drops invalid ones", () => {

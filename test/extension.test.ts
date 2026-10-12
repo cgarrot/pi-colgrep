@@ -10,6 +10,7 @@ import type { Mock } from "vitest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import piColGrepExtension from "#src/extension";
 import type { ColGrepConfig } from "#src/lib/config";
+import { runIndexBuild } from "#src/lib/builder";
 import { recordStat } from "#src/lib/stats";
 
 // Mock config loading so tests control `indexOnStartup` without touching the
@@ -20,6 +21,7 @@ const { loadConfig } = vi.hoisted(() => ({
     guard: { mode: "off", allowGitGrep: true },
     agent: { enabled: true, timeoutMs: 300_000, maxConcurrent: 1 },
     concurrency: { searchMax: 2, agentMax: 1, initMax: 1, waitMs: 60_000, initTimeoutMs: 900_000 },
+    indexing: { maxFiles: 20_000 },
   })),
 }));
 
@@ -59,12 +61,18 @@ vi.mock("#src/lib/slots", () => ({
   ),
 }));
 
+// The PTY builder spawns real processes; stub it out in tests.
+vi.mock("#src/lib/builder", () => ({
+  runIndexBuild: vi.fn(async () => ({ code: 0, stdout: "", stderr: "" })),
+}));
+
 function sessionConfig(
   overrides: {
     indexOnStartup?: boolean;
     guard?: Partial<ColGrepConfig["guard"]>;
     agent?: Partial<ColGrepConfig["agent"]>;
     concurrency?: Partial<ColGrepConfig["concurrency"]>;
+    indexing?: Partial<ColGrepConfig["indexing"]>;
   } = {},
 ): ColGrepConfig {
   return {
@@ -84,11 +92,16 @@ function sessionConfig(
       initTimeoutMs: 900_000,
       ...overrides.concurrency,
     },
+    indexing: {
+      maxFiles: 20_000,
+      ...overrides.indexing,
+    },
   };
 }
 
 beforeEach(() => {
   loadConfig.mockReturnValue(sessionConfig());
+  vi.mocked(runIndexBuild).mockClear();
 });
 
 // ---- TestPi stub ----
@@ -102,6 +115,7 @@ interface TestCtx {
   ui: {
     notify: Mock<(message: string, type?: string) => void>;
     setStatus: Mock<(key: string, text: string | undefined) => void>;
+    setWidget: Mock<(key: string, lines: string[] | undefined) => void>;
   };
 }
 
@@ -182,6 +196,7 @@ function makeCtx(cwd = "/project"): TestCtx {
     ui: {
       notify: vi.fn<(message: string, type?: string) => void>(),
       setStatus: vi.fn<(key: string, text: string | undefined) => void>(),
+      setWidget: vi.fn<(key: string, lines: string[] | undefined) => void>(),
     },
   };
 }
@@ -189,6 +204,9 @@ function makeCtx(cwd = "/project"): TestCtx {
 function makeSessionStartEvent() {
   return {};
 }
+
+/** Let fire-and-forget background chains (build probe) settle. */
+const flushMicrotasks = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 const NO_INDEX_STATUS =
   "No index found for /project [model]\nRun `colgrep <query>` to create one.\n";
@@ -216,9 +234,8 @@ describe("extension — session_start reindex", () => {
 
   it("runs colgrep init -y . when colgrep is available", async () => {
     await pi.trigger("session_start", makeSessionStartEvent(), ctx);
-    expect(pi.exec).toHaveBeenCalledWith(
-      "colgrep",
-      ["init", "-y", "."],
+    await flushMicrotasks();
+    expect(runIndexBuild).toHaveBeenCalledWith(
       expect.objectContaining({ cwd: "/project" }),
     );
   });
@@ -232,11 +249,7 @@ describe("extension — session_start reindex", () => {
       ),
     );
     await pi.trigger("session_start", makeSessionStartEvent(), ctx);
-    expect(pi.exec).not.toHaveBeenCalledWith(
-      "colgrep",
-      ["init", "-y", "."],
-      expect.anything(),
-    );
+    expect(runIndexBuild).not.toHaveBeenCalled();
   });
 
   it("does not run colgrep init when colgrep is unavailable", async () => {
@@ -251,27 +264,30 @@ describe("extension — session_start reindex", () => {
     );
   });
 
-  it("sets indexing status before running and clears it after", async () => {
-    const statusCalls: Array<[string, string | undefined]> = [];
-    ctx.ui.setStatus.mockImplementation(
-      (key: string, text: string | undefined) => {
-        statusCalls.push([key, text]);
+  it("shows indexing progress in a widget and clears it after", async () => {
+    const widgetCalls: Array<[string, string[] | undefined]> = [];
+    ctx.ui.setWidget.mockImplementation(
+      (key: string, lines: string[] | undefined) => {
+        widgetCalls.push([key, lines]);
       },
     );
     await pi.trigger("session_start", makeSessionStartEvent(), ctx);
-    // Startup indexing is now fire-and-forget; drain it via shutdown so the
-    // status-clear has run before asserting.
+    // Startup indexing is fire-and-forget; drain it via shutdown so the
+    // widget-clear has run before asserting.
     await pi.trigger("session_shutdown", {}, ctx);
-    expect(statusCalls.some(([, t]) => t?.startsWith("colgrep:"))).toBe(true);
-    expect(statusCalls.at(-1)).toEqual(["colgrep", undefined]);
+    expect(
+      widgetCalls.some(([, lines]) =>
+        lines?.some((line) => line.startsWith("colgrep:")),
+      ),
+    ).toBe(true);
+    expect(widgetCalls.at(-1)).toEqual(["colgrep-index", undefined]);
   });
 
   it("uses the session cwd as the reindex working directory", async () => {
     ctx = makeCtx("/workspace/myproject");
     await pi.trigger("session_start", makeSessionStartEvent(), ctx);
-    expect(pi.exec).toHaveBeenCalledWith(
-      "colgrep",
-      ["init", "-y", "."],
+    await flushMicrotasks();
+    expect(runIndexBuild).toHaveBeenCalledWith(
       expect.objectContaining({ cwd: "/workspace/myproject" }),
     );
   });
@@ -297,51 +313,34 @@ describe("extension — session_start background indexing (#389)", () => {
   });
 
   it("kicks off the startup index without blocking on it", async () => {
-    // Hold the `init` exec so it never resolves during the handler.
-    let resolveInit: (() => void) | undefined;
-    pi.exec.mockImplementation((_cmd, args) => {
-      if (args[0] === "init") {
-        return new Promise((resolve) => {
-          resolveInit = () => resolve({ stdout: "", stderr: "", code: 0 });
-        });
-      }
-      if (args[0] === "status") {
-        return Promise.resolve({
-          stdout: NO_INDEX_STATUS,
-          stderr: "",
-          code: 0,
-        });
-      }
-      return Promise.resolve({ stdout: "", stderr: "", code: 0 });
-    });
-    const statusCalls: Array<[string, string | undefined]> = [];
-    ctx.ui.setStatus.mockImplementation((key, text) => {
-      statusCalls.push([key, text]);
+    // Hold the builder so it never resolves during the handler.
+    vi.mocked(runIndexBuild).mockImplementationOnce(
+      () => new Promise(() => {}),
+    );
+    const widgetCalls: Array<[string, string[] | undefined]> = [];
+    ctx.ui.setWidget.mockImplementation((key, lines) => {
+      widgetCalls.push([key, lines]);
     });
 
     await pi.trigger("session_start", makeSessionStartEvent(), ctx);
+    await flushMicrotasks();
 
-    // The init was launched...
-    expect(pi.exec).toHaveBeenCalledWith(
-      "colgrep",
-      ["init", "-y", "."],
+    // The build was launched...
+    expect(runIndexBuild).toHaveBeenCalledWith(
       expect.objectContaining({ cwd: "/project" }),
     );
-    // ...but the handler returned before it completed: the indexing status is
+    // ...but the handler returned before it completed: the indexing widget is
     // still set (not cleared), proving startup is non-blocking.
-    expect(statusCalls.at(-1)).toEqual(["colgrep", "colgrep: indexing\u2026"]);
-
-    resolveInit?.();
+    expect(widgetCalls.at(-1)).toEqual([
+      "colgrep-index",
+      ["colgrep: indexing…"],
+    ]);
   });
 
   it("does not run the startup index when indexOnStartup is false", async () => {
     loadConfig.mockReturnValue(sessionConfig({ indexOnStartup: false }));
     await pi.trigger("session_start", makeSessionStartEvent(), ctx);
-    expect(pi.exec).not.toHaveBeenCalledWith(
-      "colgrep",
-      ["init", "-y", "."],
-      expect.anything(),
-    );
+    expect(runIndexBuild).not.toHaveBeenCalled();
     // Availability is still checked.
     expect(pi.exec).toHaveBeenCalledWith(
       "colgrep",
@@ -383,22 +382,14 @@ describe("extension — tool_result scheduling", () => {
     await warmSession();
     await pi.trigger("tool_result", { toolName: "write", isError: false }, ctx);
     await vi.advanceTimersByTimeAsync(4_000);
-    expect(pi.exec).toHaveBeenCalledWith(
-      "colgrep",
-      ["init", "-y", "."],
-      expect.anything(),
-    );
+    expect(runIndexBuild).toHaveBeenCalled();
   });
 
   it("schedules a reindex after a successful edit tool_result", async () => {
     await warmSession();
     await pi.trigger("tool_result", { toolName: "edit", isError: false }, ctx);
     await vi.advanceTimersByTimeAsync(4_000);
-    expect(pi.exec).toHaveBeenCalledWith(
-      "colgrep",
-      ["init", "-y", "."],
-      expect.anything(),
-    );
+    expect(runIndexBuild).toHaveBeenCalled();
   });
 
   it("does not schedule a reindex for an error tool_result", async () => {
@@ -462,11 +453,7 @@ describe("extension — /colgrep-reindex command", () => {
   it("runs colgrep init immediately when invoked", async () => {
     await warmSession();
     await pi.invokeCommand("colgrep-reindex", "", ctx);
-    expect(pi.exec).toHaveBeenCalledWith(
-      "colgrep",
-      ["init", "-y", "."],
-      expect.anything(),
-    );
+    expect(runIndexBuild).toHaveBeenCalled();
   });
 
   it("shows a success notification after reindex completes", async () => {
@@ -545,11 +532,7 @@ describe("extension — write/edit reindex gating (#389)", () => {
     await pi.trigger("tool_result", { toolName: "write", isError: false }, ctx);
     await vi.advanceTimersByTimeAsync(4_000);
 
-    expect(pi.exec).toHaveBeenCalledWith(
-      "colgrep",
-      ["init", "-y", "."],
-      expect.anything(),
-    );
+    expect(runIndexBuild).toHaveBeenCalled();
   });
 
   it("skips the reindex and warns once when no index exists", async () => {
@@ -564,11 +547,7 @@ describe("extension — write/edit reindex gating (#389)", () => {
     await pi.trigger("tool_result", { toolName: "edit", isError: false }, ctx);
     await vi.advanceTimersByTimeAsync(4_000);
 
-    expect(pi.exec).not.toHaveBeenCalledWith(
-      "colgrep",
-      ["init", "-y", "."],
-      expect.anything(),
-    );
+    expect(runIndexBuild).not.toHaveBeenCalled();
     expect(ctx.ui.notify).toHaveBeenCalledTimes(1);
     expect(ctx.ui.notify).toHaveBeenCalledWith(
       expect.stringContaining("skipping"),
@@ -589,11 +568,7 @@ describe("extension — write/edit reindex gating (#389)", () => {
     await pi.trigger("tool_result", { toolName: "write", isError: false }, ctx);
     await vi.advanceTimersByTimeAsync(4_000);
 
-    expect(pi.exec).toHaveBeenCalledWith(
-      "colgrep",
-      ["init", "-y", "."],
-      expect.anything(),
-    );
+    expect(runIndexBuild).toHaveBeenCalled();
   });
 });
 
