@@ -134,6 +134,10 @@ Notes:
 3. **Escalate** to `colgrep_agent` for open-ended localization; **don't duplicate** its work afterwards.
 4. Keep `grep` for pipes, outside-the-repo paths, and index-less situations.
 5. Combine tools deliberately: `colgrep_agent` to locate → `read` → `edit`.
+6. In large multi-project workspaces (e.g. `prototypes/*`), **scope searches to
+   the specific project directory** (`path` parameter) instead of the whole
+   workspace — first-time indexing of a workspace with hundreds of projects
+   and dump folders is expensive; per-project indexes are fast.
 
 ## Need Help?
 

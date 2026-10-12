@@ -136,6 +136,13 @@ Config files (project overrides global, per section):
   should be added to colgrep's `extra_ignore` in
   `~/Library/Application Support/colgrep/config.json`.
 
+> **`extra_ignore` semantics (measured on colgrep 1.8.5)**: entries match
+> **exact file/directory names** anywhere in the tree — **globs and substrings
+> do not work** (`**/dbg*`, `*.pem`, `**/*secret*` are silently no-ops).
+> Hidden files/dirs are skipped by default, and `.pem`/`.key`-style files are
+> not indexed by colgrep's type filter anyway. Use plain names:
+> `dbg2`, `wtest`, `node_modules`, `dist`, `build`.
+
 ## Credits & license
 
 - Base package: [`@gotgenes/pi-colgrep`](https://github.com/gotgenes/pi-packages) v2.0.0, MIT,
