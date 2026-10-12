@@ -11,6 +11,12 @@ import {
 import { classifyBashCommand } from "./lib/guard";
 import { checkIndexExists } from "./lib/index-status";
 import { createReindexer, type Reindexer } from "./lib/reindex";
+import {
+  formatStatsSummary,
+  getStatsPath,
+  recordStat,
+  summarizeStats,
+} from "./lib/stats";
 import { registerColGrep } from "./tools/colgrep";
 import { registerColGrepAgent } from "./tools/colgrep_agent";
 
@@ -43,6 +49,8 @@ export default function piColGrepExtension(pi: ExtensionAPI): void {
   let agentModelInstalled: boolean | undefined;
   // Anti-loop counters for the colgrep-first guard (per session).
   const guardBlockCounts = new Map<string, number>();
+  // Shared adoption metrics across all sessions on this machine.
+  const statsPath = getStatsPath(getAgentDir());
 
   const exec = (
     cmd: string,
@@ -106,10 +114,10 @@ export default function piColGrepExtension(pi: ExtensionAPI): void {
     }
   });
 
-  // colgrep-first guard (config-gated, default off: the agent decides).
+  // colgrep-first guard (config-gated; also the adoption counter when off).
   pi.on("tool_call", (event) => {
     const config = sessionConfig;
-    if (!config || config.guard.mode === "off") return undefined;
+    if (!config) return undefined;
     if (event.toolName !== "bash") return undefined;
 
     const command = (event.input as { command?: unknown }).command;
@@ -120,6 +128,12 @@ export default function piColGrepExtension(pi: ExtensionAPI): void {
       { mode: config.guard.mode, allowGitGrep: config.guard.allowGitGrep },
       guardBlockCounts,
     );
+    if (decision.detected) {
+      recordStat(
+        statsPath,
+        decision.action === "block" ? "grep_blocked" : "grep_allowed",
+      );
+    }
     if (decision.action === "block") {
       return { block: true, reason: decision.reason };
     }
@@ -127,6 +141,13 @@ export default function piColGrepExtension(pi: ExtensionAPI): void {
   });
 
   pi.on("tool_result", (event, ctx) => {
+    if (!event.isError && event.toolName === "colgrep") {
+      recordStat(statsPath, "search");
+    }
+    if (!event.isError && event.toolName === "colgrep_agent") {
+      recordStat(statsPath, "agent_run");
+    }
+
     if (event.isError) return;
     if (event.toolName !== "write" && event.toolName !== "edit") return;
     if (!indexExists) {
@@ -175,6 +196,14 @@ export default function piColGrepExtension(pi: ExtensionAPI): void {
       // A manual reindex establishes an index, so resume write/edit reindexing.
       indexExists = true;
       ctx.ui.notify("ColGrep index updated.", "info");
+    },
+  });
+
+  pi.registerCommand("colgrep-stats", {
+    description:
+      "Show colgrep-first adoption counters (searches, agent runs, recursive greps)",
+    handler: async (_args, ctx) => {
+      ctx.ui.notify(formatStatsSummary(summarizeStats(statsPath)), "info");
     },
   });
 

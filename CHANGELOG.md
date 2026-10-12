@@ -1,5 +1,17 @@
 # Changelog
 
+## 3.2.0 — adoption enforcement & measurement
+
+- **Guard detection mode**: recursive in-repo searches are now detected even
+  when the guard is `off`, feeding adoption counters without ever blocking.
+- **Adoption stats**: every session appends to a shared
+  `stats.jsonl` (tool searches, agent runs, blocked/allowed recursive greps) —
+  append-only JSONL so concurrent mesh/subagent sessions never race.
+- **`/colgrep-stats`** command: totals, last-7-day counts and the colgrep
+  share (colgrep searches vs recursive greps) for the whole machine.
+- Recommendation: run the guard in `warn` mode (one nudge per pattern, then
+  anti-loop pass-through) and watch the stats before deciding on `strict`.
+
 ## 3.1.0 — collapsed-view previews
 
 - Collapsed tool results now show the first 3 returned lines plus a

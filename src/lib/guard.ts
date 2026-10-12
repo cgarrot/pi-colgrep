@@ -29,6 +29,8 @@ export interface GuardDecision {
   action: "allow" | "block";
   reason?: string;
   signature?: string;
+  /** True when a recursive in-repo search was detected (even if allowed). */
+  detected?: boolean;
 }
 
 const SEARCH_TOOLS = new Set(["rg", "grep", "ag", "ack", "ugrep", "pt"]);
@@ -67,9 +69,9 @@ export function classifyBashCommand(
   options: GuardOptions,
   blockCounts: Map<string, number> = new Map(),
 ): GuardDecision {
-  if (options.mode === "off") {
-    return { action: "allow" };
-  }
+  // When mode is "off" parsing still runs (adoption stats count recursive
+  // greps) but nothing is blocked and no counters are mutated.
+  const enforcing = options.mode !== "off";
 
   const segments = splitPipeline(command);
   for (const segment of segments) {
@@ -112,17 +114,23 @@ export function classifyBashCommand(
 
     const pattern = extractPattern(tokens);
     const signature = `${tool} ${pattern}`;
+
+    if (!enforcing) {
+      return { action: "allow", detected: true, signature };
+    }
+
     const timesBlocked = blockCounts.get(signature) ?? 0;
     const maxBlocks =
       options.mode === "warn" ? 1 : MAX_BLOCKS_PER_SIGNATURE;
     if (timesBlocked >= maxBlocks) {
       // Anti-loop: let the repeated attempt through.
-      return { action: "allow" };
+      return { action: "allow", detected: true, signature };
     }
 
     blockCounts.set(signature, timesBlocked + 1);
     return {
       action: "block",
+      detected: true,
       signature,
       reason: buildBlockReason(tool, pattern),
     };

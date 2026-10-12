@@ -10,6 +10,7 @@ import type { Mock } from "vitest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import piColGrepExtension from "#src/extension";
 import type { ColGrepConfig } from "#src/lib/config";
+import { recordStat } from "#src/lib/stats";
 
 // Mock config loading so tests control `indexOnStartup` without touching the
 // real filesystem. Path builders stay real.
@@ -29,6 +30,21 @@ vi.mock("#src/lib/config", async (importOriginal) => {
 // The agent-model probe touches the real HF cache; keep tests hermetic.
 vi.mock("#src/lib/agent", () => ({
   isAgentModelInstalled: vi.fn(async () => true),
+}));
+
+// Adoption stats hit the real agent dir; mock them out.
+vi.mock("#src/lib/stats", () => ({
+  getStatsPath: vi.fn(() => "/tmp/pi-colgrep-stats.jsonl"),
+  recordStat: vi.fn(),
+  summarizeStats: vi.fn(() => ({
+    since: undefined,
+    totals: { search: 0, agent_run: 0, grep_blocked: 0, grep_allowed: 0 },
+    last7Days: { search: 0, agent_run: 0, grep_blocked: 0, grep_allowed: 0 },
+    eventsTotal: 0,
+    recursiveGreps: 0,
+    colgrepShare: 1,
+  })),
+  formatStatsSummary: vi.fn(() => "ColGrep adoption: mock summary"),
 }));
 
 function sessionConfig(
@@ -631,6 +647,50 @@ describe("extension — colgrep-first guard (tool_call)", () => {
       ctx,
     );
     expect(decision).toBeUndefined();
+  });
+
+  it("records a blocked grep in the adoption stats", async () => {
+    await warm("strict");
+    vi.mocked(recordStat).mockClear();
+    await pi.triggerReturning("tool_call", bashEvent("rg handleError"), ctx);
+    expect(recordStat).toHaveBeenCalledWith(
+      "/tmp/pi-colgrep-stats.jsonl",
+      "grep_blocked",
+    );
+  });
+
+  it("records an allowed recursive grep when the guard is off", async () => {
+    await warm("off");
+    vi.mocked(recordStat).mockClear();
+    await pi.triggerReturning("tool_call", bashEvent("rg handleError"), ctx);
+    expect(recordStat).toHaveBeenCalledWith(
+      "/tmp/pi-colgrep-stats.jsonl",
+      "grep_allowed",
+    );
+  });
+});
+
+// ---- /colgrep-stats command ----
+
+describe("extension — /colgrep-stats command", () => {
+  let pi: TestPi;
+  let ctx: TestCtx;
+
+  beforeEach(() => {
+    pi = new TestPi();
+    ctx = makeCtx();
+    pi.exec.mockResolvedValue({ stdout: "", stderr: "", code: 0 });
+    piColGrepExtension(pi.asExtensionAPI());
+  });
+
+  it("notifies with the formatted adoption summary", async () => {
+    await pi.trigger("session_start", makeSessionStartEvent(), ctx);
+    ctx.ui.notify.mockClear();
+    await pi.invokeCommand("colgrep-stats", "", ctx);
+    expect(ctx.ui.notify).toHaveBeenCalledWith(
+      "ColGrep adoption: mock summary",
+      "info",
+    );
   });
 });
 

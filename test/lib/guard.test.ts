@@ -124,3 +124,33 @@ describe("classifyBashCommand — anti-loop safeguard", () => {
     expect(decide("rg beta", STRICT, counts).action).toBe("block");
   });
 });
+
+describe("classifyBashCommand — detection flag (adoption stats)", () => {
+  it("detects recursive greps in off mode without blocking", () => {
+    const decision = decide("rg handleError", OFF);
+    expect(decision.action).toBe("allow");
+    expect(decision.detected).toBe(true);
+  });
+
+  it("does not flag allow-listed cases", () => {
+    expect(decide("ps aux | grep node", OFF).detected).toBeFalsy();
+    expect(decide("grep foo file.txt", OFF).detected).toBeFalsy();
+    expect(decide("git grep foo", OFF).detected).toBeFalsy();
+    expect(decide("rg --files", OFF).detected).toBeFalsy();
+  });
+
+  it("flags anti-loop pass-through as detected", () => {
+    const counts = new Map<string, number>();
+    decide("rg alpha", STRICT, counts);
+    decide("rg alpha", STRICT, counts);
+    const third = decide("rg alpha", STRICT, counts);
+    expect(third.action).toBe("allow");
+    expect(third.detected).toBe(true);
+  });
+
+  it("does not mutate counters in off mode", () => {
+    const counts = new Map<string, number>();
+    decide("rg handleError", OFF, counts);
+    expect(counts.size).toBe(0);
+  });
+});

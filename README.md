@@ -78,10 +78,16 @@ Typically 20–90 s; runs on the local GPU (Metal). One run at a time per sessio
 - `colgrep_agent` is the escalation for open-ended localization.
 - `grep`/`rg` remain for pipes, outside-the-repo paths, and index-less situations.
 
-The optional **guard** (`guard.mode`: `off` default | `warn` | `strict`) blocks recursive bash greps
+The optional **guard** (`guard.mode`: `off` code default | `warn` recommended | `strict`) blocks recursive bash greps
 (`rg`, `grep -r`, `ag`, `ack`) with a ready-to-paste colgrep equivalent. Allow-list: piped usage,
 non-recursive grep, `git grep` (configurable), `rg --files`, redirects, single-file targets.
 Anti-loop: a repeated search signature is blocked at most twice, then passes.
+
+Adoption is measured machine-wide: every session appends counters to
+`<agentDir>/extensions/pi-colgrep/stats.jsonl` (append-only, safe for concurrent
+mesh/subagent sessions) and `/colgrep-stats` shows totals, last-7-day counts and
+the **colgrep share** (searches vs recursive greps). Detection runs even when the
+guard is `off` — measuring never blocks anything.
 
 ## Configuration
 
@@ -96,7 +102,7 @@ Config files (project overrides global, per section):
 {
   "indexOnStartup": true,          // background index build on session start
   "guard": {
-    "mode": "off",                 // "off" (agent decides) | "warn" | "strict"
+    "mode": "warn",               // "off" (code default) | "warn" (recommended) | "strict"
     "allowGitGrep": true
   },
   "agent": {
@@ -110,6 +116,7 @@ Config files (project overrides global, per section):
 ## Commands
 
 - `/colgrep-reindex` — build/refresh the semantic index for the current directory.
+- `/colgrep-stats` — show adoption counters (searches, agent runs, recursive greps, blocked/allowed, colgrep share).
 - `/colgrep-agent-install` — download the colgrep-agent-2B model (~2.5 GB, one-time).
 
 ## Indexing lifecycle
