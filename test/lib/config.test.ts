@@ -101,6 +101,12 @@ describe("normalizeConfig", () => {
       concurrency: { searchMax: 16 },
     });
     expect(normalizeConfig({ concurrency: { waitMs: 10 } })).toEqual({});
+    expect(
+      normalizeConfig({ concurrency: { initTimeoutMs: 1_200_000 } }),
+    ).toEqual({ concurrency: { initTimeoutMs: 1_200_000 } });
+    expect(normalizeConfig({ concurrency: { initTimeoutMs: 100 } })).toEqual(
+      {},
+    );
   });
 
   it("clamps agent values and drops invalid ones", () => {

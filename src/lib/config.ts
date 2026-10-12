@@ -40,6 +40,8 @@ export interface ConcurrencyConfig {
   initMax: number;
   /** How long an operation waits for a free slot before giving up (default 60 s). */
   waitMs: number;
+  /** Exec timeout for one index build, ms (default 900 000 = 15 min). */
+  initTimeoutMs: number;
 }
 
 export interface ColGrepConfig {
@@ -76,6 +78,7 @@ export const DEFAULT_CONFIG: ColGrepConfig = {
     agentMax: 1,
     initMax: 1,
     waitMs: 60_000,
+    initTimeoutMs: 900_000,
   },
 };
 
@@ -146,10 +149,12 @@ export function normalizeConfig(raw: unknown): ColGrepConfigPartial {
     const agentMax = bounded(c.agentMax, 1, 8);
     const initMax = bounded(c.initMax, 1, 8);
     const waitMs = bounded(c.waitMs, 1_000, 600_000);
+    const initTimeoutMs = bounded(c.initTimeoutMs, 60_000, 3_600_000);
     if (searchMax !== undefined) normalized.searchMax = searchMax;
     if (agentMax !== undefined) normalized.agentMax = agentMax;
     if (initMax !== undefined) normalized.initMax = initMax;
     if (waitMs !== undefined) normalized.waitMs = waitMs;
+    if (initTimeoutMs !== undefined) normalized.initTimeoutMs = initTimeoutMs;
     if (Object.keys(normalized).length > 0) config.concurrency = normalized;
   }
 

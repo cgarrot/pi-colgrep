@@ -1,5 +1,19 @@
 # Changelog
 
+## 3.4.1 — corrupted-index self-heal
+
+- Interrupted builds (timeout, session end, machine pressure) leave partial
+  indexes; colgrep then fails with "Index load failed: Failed to open
+  metadata" on every session. The extension now self-heals: it detects the
+  error (search **and** reindex paths), removes the corrupted index directory
+  (hard safety check: must live under colgrep's own `indices/` root), and
+  rebuilds/retries once.
+- Index-build exec timeout raised 5 → 15 min (`concurrency.initTimeoutMs`,
+  configurable): first builds of large projects legitimately exceed 5 min,
+  and the machine-wide init slot already prevents build stampedes.
+- 36 stale/corrupted index dirs cleaned on this machine during diagnosis.
+- +14 tests (241 total).
+
 ## 3.4.0 — machine-wide concurrency protection
 
 - **Slot limiter across all Pi sessions** (lock files in

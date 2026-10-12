@@ -16,6 +16,10 @@ import { Type } from "typebox";
 import type { SearchParams } from "#src/lib/args";
 import type { AvailabilityState } from "#src/lib/availability";
 import type { Exec } from "#src/lib/exec";
+import {
+  isRecoverableIndexError,
+  recoverCorruptedIndex,
+} from "#src/lib/index-recovery";
 import { runSearch } from "#src/lib/search";
 import type { SlotRunner } from "#src/lib/slots";
 import { err, ok, previewBlock } from "#src/tool-result";
@@ -33,6 +37,8 @@ export interface ColGrepExecuteDeps {
   waitForIndexIdle?: () => Promise<void>;
   /** Machine-wide search slot (shared across all Pi sessions). */
   withSearchSlot?: SlotRunner;
+  /** Self-heal hook for corrupted indexes (tests); defaults to real recovery. */
+  recoverIndex?: (exec: Exec, cwd: string) => Promise<string | undefined>;
   /** Override default truncation line limit. Used in tests. */
   maxLines?: number;
   /** Override default truncation byte limit. Used in tests. */
@@ -66,15 +72,35 @@ export async function executeColGrepSearch(
     await deps.waitForIndexIdle();
   }
 
-  const searchResult = deps.withSearchSlot
-    ? await deps.withSearchSlot(() => runSearch(deps.exec, params, cwd, signal))
-    : await runSearch(deps.exec, params, cwd, signal);
+  const runOnce = () =>
+    deps.withSearchSlot
+      ? deps.withSearchSlot(() =>
+          runSearch(deps.exec, params, cwd, signal),
+        )
+      : runSearch(deps.exec, params, cwd, signal);
 
+  let searchResult = await runOnce();
   if (searchResult === undefined) {
     return err(
       "colgrep is at capacity (machine-wide search limit reached). " +
         "Retry in a moment.",
     );
+  }
+
+  if (searchResult.error && isRecoverableIndexError(searchResult.error)) {
+    // Self-heal: an interrupted build left a partial index ("Failed to open
+    // metadata"). Remove it and retry once — the retry rebuilds the index.
+    const recover = deps.recoverIndex ?? recoverCorruptedIndex;
+    const removed = await recover(deps.exec, cwd);
+    if (removed) {
+      searchResult = await runOnce();
+      if (searchResult === undefined) {
+        return err(
+          "colgrep is at capacity (machine-wide search limit reached). " +
+            "Retry in a moment.",
+        );
+      }
+    }
   }
 
   if (searchResult.error) {

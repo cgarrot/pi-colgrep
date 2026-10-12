@@ -1,4 +1,8 @@
 import type { Exec } from "./exec";
+import {
+  isRecoverableIndexError,
+  recoverCorruptedIndex,
+} from "./index-recovery";
 import type { SlotRunner } from "./slots";
 
 export type ReindexStatusCallback = (status: string | undefined) => void;
@@ -13,6 +17,11 @@ export interface ReindexerDeps {
   timeoutMs?: number;
   /** Machine-wide index-build slot (one build at a time across all sessions). */
   withInitSlot?: SlotRunner;
+  /**
+   * Self-heal hook for corrupted indexes. Defaults to locating the project's
+   * index via `colgrep status` and removing it so a fresh build can run.
+   */
+  recoverIndex?: (output: string) => Promise<string | undefined>;
 }
 
 export interface Reindexer {
@@ -31,13 +40,17 @@ export interface Reindexer {
 }
 
 const DEFAULT_DEBOUNCE_MS = 4_000;
-const DEFAULT_TIMEOUT_MS = 300_000;
+// First builds of large projects can legitimately exceed five minutes; the
+// machine-wide init slot already prevents build stampedes.
+const DEFAULT_TIMEOUT_MS = 900_000;
 const INDEXING_STATUS = "colgrep: indexing\u2026";
 const QUEUED_STATUS = "colgrep: indexing\u2026 (queued updates)";
 const INDEXING_FAILED_STATUS = "colgrep: indexing failed";
 
 export function createReindexer(deps: ReindexerDeps): Reindexer {
   const { exec, cwd, onStatus, withInitSlot } = deps;
+  const recoverIndex =
+    deps.recoverIndex ?? (() => recoverCorruptedIndex(exec, cwd));
   const timeoutMs = deps.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const debounceMs = deps.debounceMs ?? DEFAULT_DEBOUNCE_MS;
 
@@ -53,18 +66,35 @@ export function createReindexer(deps: ReindexerDeps): Reindexer {
     let failed = false;
     let skipped = false;
 
-    const doRun = async (): Promise<void> => {
+    const attempt = async (): Promise<{ ok: boolean; output: string }> => {
       const result = await exec("colgrep", ["init", "-y", "."], {
         cwd,
         timeout: timeoutMs,
       });
+      const output = `${result.stdout}\n${result.stderr}`;
       if (result.code !== 0) {
-        failed = true;
         const detail = result.stderr.trim();
         console.error(
           `colgrep reindex failed: ${detail || `exit code ${result.code}`}`,
         );
       }
+      return { ok: result.code === 0, output };
+    };
+
+    const doRun = async (): Promise<void> => {
+      let result = await attempt();
+      failed = !result.ok;
+      if (result.ok || !isRecoverableIndexError(result.output)) return;
+
+      // Self-heal: an interrupted build left a partial index
+      // ("Failed to open metadata"). Remove it and rebuild once from scratch.
+      const removed = await recoverIndex(result.output);
+      if (!removed) return;
+      console.warn(
+        `colgrep: removed corrupted index at ${removed} — rebuilding`,
+      );
+      result = await attempt();
+      failed = !result.ok;
     };
 
     try {

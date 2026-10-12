@@ -30,7 +30,7 @@ describe("createReindexer — runNow()", () => {
     await reindexer.runNow();
     expect(exec).toHaveBeenCalledWith("colgrep", ["init", "-y", "."], {
       cwd: "/project",
-      timeout: 300_000,
+      timeout: 900_000,
     });
   });
 
@@ -175,7 +175,7 @@ describe("createReindexer — schedule()", () => {
     expect(exec).toHaveBeenCalledTimes(1);
     expect(exec).toHaveBeenCalledWith("colgrep", ["init", "-y", "."], {
       cwd: "/project",
-      timeout: 300_000,
+      timeout: 900_000,
     });
   });
 
@@ -584,5 +584,58 @@ describe("createReindexer — whenIdle()", () => {
     await running;
     await idlePromise;
     expect(idle).toBe(true);
+  });
+});
+
+// ---- corrupted index self-heal ----
+
+describe("createReindexer — corrupted index self-heal", () => {
+  const CORRUPT =
+    "Error: Index load failed: Failed to open metadata: No such file or directory (os error 2)";
+
+  it("removes the corrupted index and retries once", async () => {
+    const exec = makeExec();
+    exec
+      .mockResolvedValueOnce({ stdout: "", stderr: CORRUPT, code: 1 })
+      .mockResolvedValueOnce({ stdout: "", stderr: "", code: 0 });
+    const recover = vi.fn(async () => "/tmp/idx/proj-abcd1234");
+    const reindexer = createReindexer({
+      exec,
+      cwd: "/project",
+      onStatus: makeOnStatus(),
+      recoverIndex: recover,
+    });
+    await reindexer.runNow();
+    expect(recover).toHaveBeenCalledOnce();
+    expect(exec).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not attempt recovery for unrelated failures", async () => {
+    const exec = makeExec();
+    exec.mockResolvedValue({ stdout: "", stderr: "boom", code: 1 });
+    const recover = vi.fn(async () => "/tmp/idx");
+    const reindexer = createReindexer({
+      exec,
+      cwd: "/project",
+      onStatus: makeOnStatus(),
+      recoverIndex: recover,
+    });
+    await reindexer.runNow();
+    expect(recover).not.toHaveBeenCalled();
+    expect(exec).toHaveBeenCalledTimes(1);
+  });
+
+  it("gives up when recovery finds nothing to remove", async () => {
+    const exec = makeExec();
+    exec.mockResolvedValue({ stdout: "", stderr: CORRUPT, code: 1 });
+    const recover = vi.fn(async () => undefined);
+    const reindexer = createReindexer({
+      exec,
+      cwd: "/project",
+      onStatus: makeOnStatus(),
+      recoverIndex: recover,
+    });
+    await reindexer.runNow();
+    expect(exec).toHaveBeenCalledTimes(1);
   });
 });

@@ -370,6 +370,32 @@ describe("executeColGrepSearch — index idle wait", () => {  it("awaits waitFor
     expect(result.isError).toBe(false);
   });
 
+  it("self-heals a corrupted index and retries once", async () => {
+    const availability = createAvailabilityState();
+    availability.available = true;
+    const exec = vi
+      .fn<Exec>()
+      .mockResolvedValueOnce({
+        stdout: "",
+        stderr:
+          "Error: Index load failed: Failed to open metadata: No such file or directory (os error 2)",
+        code: 1,
+      })
+      .mockResolvedValueOnce({ stdout: "[]", stderr: "", code: 0 });
+    const recoverIndex = vi.fn(async () => "/tmp/idx/proj-abcd1234");
+
+    const result = await executeColGrepSearch(
+      { query: "auth" },
+      { exec, availability, recoverIndex },
+      "/project",
+      undefined,
+    );
+
+    expect(recoverIndex).toHaveBeenCalledOnce();
+    expect(exec).toHaveBeenCalledTimes(2);
+    expect(result.isError).toBe(false);
+  });
+
   it("returns a capacity error when no machine-wide slot is available", async () => {
     const availability = createAvailabilityState();
     availability.available = true;

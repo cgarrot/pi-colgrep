@@ -114,7 +114,8 @@ Config files (project overrides global, per section):
     "searchMax": 2,                // concurrent colgrep searches machine-wide
     "agentMax": 1,                 // concurrent agent runs machine-wide (~4 GB RAM each)
     "initMax": 1,                  // concurrent index builds machine-wide (CPU-heavy)
-    "waitMs": 60000                // how long an operation waits for a slot
+    "waitMs": 60000,               // how long an operation waits for a slot
+    "initTimeoutMs": 900000        // per-build exec timeout (15 min)
   }
 }
 ```
@@ -137,6 +138,16 @@ sessions (`<agentDir>/extensions/pi-colgrep/slots/`):
 
 Stale locks self-heal: a lock whose owner process died (session crash) or is
 older than 15 minutes is stolen, so a crashed agent can never wedge the machine.
+
+**Corrupted-index self-heal.** A build interrupted mid-write (timeout, session
+end, machine pressure) leaves a partial index and colgrep then fails with
+`Index load failed: Failed to open metadata` on every session. The extension
+detects that error (search and reindex paths), removes the corrupted index
+directory — with a hard safety check that it lives under colgrep's own
+`indices/` root — and rebuilds/retries once. Build timeouts are generous
+(15 min by default, `concurrency.initTimeoutMs`) since first builds of large
+projects legitimately take minutes and the machine-wide init slot already
+prevents build stampedes.
 
 ## Commands
 

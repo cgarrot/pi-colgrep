@@ -147,6 +147,7 @@ export default function piColGrepExtension(pi: ExtensionAPI): void {
       cwd: ctx.cwd,
       onStatus: (text) => setColGrepStatus(ctx, text),
       withInitSlot,
+      timeoutMs: config.concurrency.initTimeoutMs,
     });
 
     skipWarned = false;
@@ -239,6 +240,7 @@ export default function piColGrepExtension(pi: ExtensionAPI): void {
           cwd: ctx.cwd,
           onStatus: (text) => setColGrepStatus(ctx, text),
           withInitSlot,
+          timeoutMs: sessionConfig?.concurrency.initTimeoutMs,
         });
 
       await indexer.runNow({ waitMs: 300_000 });

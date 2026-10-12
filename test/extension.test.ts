@@ -19,7 +19,7 @@ const { loadConfig } = vi.hoisted(() => ({
     indexOnStartup: true,
     guard: { mode: "off", allowGitGrep: true },
     agent: { enabled: true, timeoutMs: 300_000, maxConcurrent: 1 },
-    concurrency: { searchMax: 2, agentMax: 1, initMax: 1, waitMs: 60_000 },
+    concurrency: { searchMax: 2, agentMax: 1, initMax: 1, waitMs: 60_000, initTimeoutMs: 900_000 },
   })),
 }));
 
@@ -70,6 +70,7 @@ function sessionConfig(
       agentMax: 1,
       initMax: 1,
       waitMs: 60_000,
+      initTimeoutMs: 900_000,
       ...overrides.concurrency,
     },
   };
