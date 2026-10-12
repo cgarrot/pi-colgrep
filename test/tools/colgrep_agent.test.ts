@@ -212,6 +212,28 @@ describe("executeColGrepAgent", () => {
       expect.objectContaining({ timeout: 1234 }),
     );
   });
+
+  it("awaits waitForIndexIdle before running", async () => {
+    const order: string[] = [];
+    exec.mockImplementation(async () => {
+      order.push("exec");
+      return { stdout: SAMPLE_JSON, stderr: "", code: 0 };
+    });
+    const deps = {
+      ...makeDeps(exec),
+      waitForIndexIdle: async () => {
+        order.push("idle");
+      },
+    };
+    const result = await executeColGrepAgent(
+      { question: "q" },
+      deps,
+      "/repo",
+      undefined,
+    );
+    expect(order).toEqual(["idle", "exec"]);
+    expect(result.isError).toBe(false);
+  });
 });
 
 // ---- registerColGrepAgent: tool registration + concurrency ----

@@ -28,6 +28,8 @@ export interface ColGrepToolDetails {
 export interface ColGrepExecuteDeps {
   exec: Exec;
   availability: AvailabilityState;
+  /** Awaited before searching: joins an in-flight reindex in this session. */
+  waitForIndexIdle?: () => Promise<void>;
   /** Override default truncation line limit. Used in tests. */
   maxLines?: number;
   /** Override default truncation byte limit. Used in tests. */
@@ -53,6 +55,12 @@ export async function executeColGrepSearch(
 
   if (!params.query && !params.regex) {
     return err("At least one of query or regex is required.");
+  }
+
+  // Join an in-flight reindex (session startup or post-edit) instead of
+  // racing it: a build in progress makes searches fail fast otherwise.
+  if (deps.waitForIndexIdle) {
+    await deps.waitForIndexIdle();
   }
 
   const searchResult = await runSearch(deps.exec, params, cwd, signal);
@@ -86,6 +94,8 @@ export async function executeColGrepSearch(
 export interface RegisterColGrepDeps {
   exec: Exec;
   availability: AvailabilityState;
+  /** Awaited before searching: joins an in-flight reindex in this session. */
+  waitForIndexIdle?: () => Promise<void>;
 }
 
 export function registerColGrep(

@@ -501,3 +501,47 @@ describe("createReindexer — runNow() coalescing & in-flight tracking", () => {
     expect(shutdownDone).toBe(true);
   });
 });
+
+// ---- whenIdle() ----
+
+describe("createReindexer — whenIdle()", () => {
+  it("resolves immediately when nothing is running", async () => {
+    const exec = makeExec();
+    exec.mockResolvedValue({ stdout: "", stderr: "", code: 0 });
+    const reindexer = createReindexer({
+      exec,
+      cwd: "/project",
+      onStatus: makeOnStatus(),
+    });
+    await expect(reindexer.whenIdle()).resolves.toBeUndefined();
+  });
+
+  it("waits for the in-flight run to complete", async () => {
+    type ExecResult = { stdout: string; stderr: string; code: number };
+    let resolveInit: ((value: ExecResult) => void) | undefined;
+    const exec = vi.fn<Exec>(
+      () =>
+        new Promise<ExecResult>((resolve) => {
+          resolveInit = resolve;
+        }),
+    );
+    const reindexer = createReindexer({
+      exec,
+      cwd: "/project",
+      onStatus: makeOnStatus(),
+    });
+
+    const running = reindexer.runNow();
+    let idle = false;
+    const idlePromise = reindexer.whenIdle().then(() => {
+      idle = true;
+    });
+    await Promise.resolve();
+    expect(idle).toBe(false);
+
+    resolveInit?.({ stdout: "", stderr: "", code: 0 });
+    await running;
+    await idlePromise;
+    expect(idle).toBe(true);
+  });
+});

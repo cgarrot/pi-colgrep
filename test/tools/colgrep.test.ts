@@ -341,3 +341,33 @@ describe("renderResult", () => {
     expect(text).toContain("Install it from: https://example.test");
   });
 });
+
+// ---- waitForIndexIdle ----
+
+describe("executeColGrepSearch — index idle wait", () => {
+  it("awaits waitForIndexIdle before searching", async () => {
+    const order: string[] = [];
+    const availability = createAvailabilityState();
+    availability.available = true;
+    const exec = vi.fn<Exec>(async () => {
+      order.push("exec");
+      return { stdout: "[]", stderr: "", code: 0 };
+    });
+
+    const result = await executeColGrepSearch(
+      { query: "auth" },
+      {
+        exec,
+        availability,
+        waitForIndexIdle: async () => {
+          order.push("idle");
+        },
+      },
+      "/project",
+      undefined,
+    );
+
+    expect(order).toEqual(["idle", "exec"]);
+    expect(result.isError).toBe(false);
+  });
+});

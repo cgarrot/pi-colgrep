@@ -121,10 +121,17 @@ Config files (project overrides global, per section):
 
 ## Indexing lifecycle
 
-- On session start the index is built in the **background** (`colgrep init`), never blocking startup.
-- After each successful `write`/`edit`, a debounced reindex is scheduled — only when an index
-  already exists for the directory.
-- A real search auto-indexes on demand regardless.
+- On session start the index is built in the **background** — but only when the
+  directory has **no index yet**; existing indexes are updated on demand by
+  searches (modified files are detected automatically). This avoids reindex
+  storms when several mesh/subagent sessions share a large directory.
+- After each successful `write`/`edit`, a debounced reindex is scheduled — only
+  when an index already exists for the directory.
+- A real search auto-indexes on demand regardless. While an index build is in
+  progress (own session or another agent's), the tool **waits or retries**
+  (exponential backoff, up to 2 min) rather than failing and suggesting grep.
+- Large directories with volatile content (e.g. `.mesh/`) should be added to
+  colgrep's `extra_ignore` in `~/Library/Application Support/colgrep/config.json`.
 
 ## Credits & license
 

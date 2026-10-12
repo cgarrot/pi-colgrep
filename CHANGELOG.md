@@ -1,5 +1,17 @@
 # Changelog
 
+## 3.3.0 — index-build resilience
+
+- Searches wait for the session's in-flight reindex instead of racing it
+  (`waitForIndexIdle`), for both `colgrep` and `colgrep_agent`.
+- Searches retry with exponential backoff (up to 2 min) while another process
+  builds the index, instead of surfacing "rely on grep for now" — the error
+  now tells the agent to retry colgrep, not to fall back to recursive grep.
+- Startup indexing now runs only when no index exists for the directory
+  (searches auto-update modified files), preventing reindex storms when
+  several mesh/subagent sessions share one large directory.
+- +8 tests (211 total).
+
 ## 3.2.0 — adoption enforcement & measurement
 
 - **Guard detection mode**: recursive in-repo searches are now detected even

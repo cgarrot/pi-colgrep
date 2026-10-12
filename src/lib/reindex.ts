@@ -19,6 +19,8 @@ export interface Reindexer {
   runNow(): Promise<void>;
   /** Cancel pending timers and wait for any in-flight reindex to finish. */
   shutdown(): Promise<void>;
+  /** Resolves when the current in-flight run (if any) completes. */
+  whenIdle(): Promise<void>;
 }
 
 const DEFAULT_DEBOUNCE_MS = 4_000;
@@ -89,6 +91,9 @@ export function createReindexer(deps: ReindexerDeps): Reindexer {
   return {
     runNow(): Promise<void> {
       return startRun();
+    },
+    whenIdle(): Promise<void> {
+      return inflightPromise ?? Promise.resolve();
     },
     schedule(): void {
       if (isShutdown) return;

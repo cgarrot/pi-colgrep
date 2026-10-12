@@ -96,3 +96,58 @@ describe("runSearch", () => {
     expect(result.output).toBe("util.ts:3-8 [score=0.500]");
   });
 });
+
+describe("runSearch — index rebuild contention", () => {
+  let exec: Mock<Exec>;
+
+  beforeEach(() => {
+    exec = vi.fn<Exec>();
+  });
+
+  const BUILDING =
+    "colgrep index is currently being built, rely on grep for now.";
+
+  it("retries while the index is being built, then succeeds", async () => {
+    exec
+      .mockResolvedValueOnce({ stdout: "", stderr: BUILDING, code: 1 })
+      .mockResolvedValueOnce({ stdout: "[]", stderr: "", code: 0 });
+    const sleeps: number[] = [];
+    const retries: number[] = [];
+    const result = await runSearch(exec, { query: "q" }, "/repo", undefined, {
+      sleep: async (ms) => {
+        sleeps.push(ms);
+      },
+      onRetry: (attempt) => {
+        retries.push(attempt);
+      },
+    });
+    expect(result.error).toBeUndefined();
+    expect(result.output).toBe("No matches found");
+    expect(exec).toHaveBeenCalledTimes(2);
+    expect(sleeps).toEqual([2_000]);
+    expect(retries).toEqual([1]);
+  });
+
+  it("gives up after the budget with actionable guidance", async () => {
+    exec.mockResolvedValue({ stdout: "", stderr: BUILDING, code: 1 });
+    const result = await runSearch(exec, { query: "q" }, "/repo", undefined, {
+      retryBudgetMs: 1_000,
+      sleep: async () => {},
+    });
+    expect(result.output).toBeUndefined();
+    expect(result.error).toContain("still running");
+    expect(result.error).toContain("retry this search in a moment");
+    expect(result.error).toContain(
+      "instead of falling back to recursive grep",
+    );
+  });
+
+  it("does not retry unrelated failures", async () => {
+    exec.mockResolvedValue({ stdout: "", stderr: "boom", code: 1 });
+    const result = await runSearch(exec, { query: "q" }, "/repo", undefined, {
+      sleep: async () => {},
+    });
+    expect(result).toEqual({ error: "boom" });
+    expect(exec).toHaveBeenCalledTimes(1);
+  });
+});

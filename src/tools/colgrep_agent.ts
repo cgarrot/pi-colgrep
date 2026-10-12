@@ -52,6 +52,8 @@ export interface ColGrepAgentExecuteDeps {
   maxConcurrent: () => number;
   /** Exec timeout in ms (agent.timeoutMs). */
   timeoutMs: () => number | undefined;
+  /** Awaited before running: joins an in-flight reindex in this session. */
+  waitForIndexIdle?: () => Promise<void>;
   /** Override default truncation limits. Used in tests. */
   maxLines?: number;
   maxBytes?: number;
@@ -96,6 +98,11 @@ export async function executeColGrepAgent(
     return err(agentModelMissingMessage());
   }
 
+  // Join an in-flight reindex instead of racing it.
+  if (deps.waitForIndexIdle) {
+    await deps.waitForIndexIdle();
+  }
+
   const outcome = await runAgent(deps.exec, params, cwd, {
     timeoutMs: deps.timeoutMs(),
     signal,
@@ -136,6 +143,8 @@ export interface RegisterColGrepAgentDeps {
   isEnabled: () => boolean;
   maxConcurrent: () => number;
   timeoutMs: () => number | undefined;
+  /** Awaited before running: joins an in-flight reindex in this session. */
+  waitForIndexIdle?: () => Promise<void>;
 }
 
 export function registerColGrepAgent(

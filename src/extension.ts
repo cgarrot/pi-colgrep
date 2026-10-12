@@ -58,7 +58,11 @@ export default function piColGrepExtension(pi: ExtensionAPI): void {
     opts?: { cwd?: string; timeout?: number; signal?: AbortSignal },
   ) => pi.exec(cmd, args, opts);
 
-  registerColGrep(pi, { exec, availability });
+  registerColGrep(pi, {
+    exec,
+    availability,
+    waitForIndexIdle: () => reindexer?.whenIdle() ?? Promise.resolve(),
+  });
   registerColGrepAgent(pi, {
     exec,
     availability,
@@ -66,6 +70,7 @@ export default function piColGrepExtension(pi: ExtensionAPI): void {
     isEnabled: () => sessionConfig?.agent.enabled ?? true,
     maxConcurrent: () => sessionConfig?.agent.maxConcurrent ?? 1,
     timeoutMs: () => sessionConfig?.agent.timeoutMs,
+    waitForIndexIdle: () => reindexer?.whenIdle() ?? Promise.resolve(),
   });
 
   pi.on("session_start", async (_event, ctx) => {
@@ -106,9 +111,10 @@ export default function piColGrepExtension(pi: ExtensionAPI): void {
     guardBlockCounts.clear();
     indexExists = await checkIndexExists(exec, ctx.cwd);
 
-    if (config.indexOnStartup) {
-      // Fire-and-forget: kick the index build off in the background so it never
-      // blocks Pi startup. `shutdown()` awaits the in-flight run on session end.
+    if (config.indexOnStartup && !indexExists) {
+      // First time only: when an index already exists, skip the startup build
+      // (searches auto-update modified files). This avoids reindex storms
+      // when several agents share the same large directory.
       void reindexer.runNow();
       indexExists = true;
     }

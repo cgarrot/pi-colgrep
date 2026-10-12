@@ -182,8 +182,14 @@ describe("extension — session_start reindex", () => {
   beforeEach(() => {
     pi = new TestPi();
     ctx = makeCtx();
-    // Default: colgrep --version succeeds, colgrep init succeeds
-    pi.exec.mockResolvedValue({ stdout: "", stderr: "", code: 0 });
+    // Default: colgrep --version succeeds, no index exists yet.
+    pi.exec.mockImplementation((_cmd, args) =>
+      Promise.resolve(
+        args[0] === "status"
+          ? { stdout: NO_INDEX_STATUS, stderr: "", code: 0 }
+          : { stdout: "", stderr: "", code: 0 },
+      ),
+    );
     piColGrepExtension(pi.asExtensionAPI());
   });
 
@@ -193,6 +199,22 @@ describe("extension — session_start reindex", () => {
       "colgrep",
       ["init", "-y", "."],
       expect.objectContaining({ cwd: "/project" }),
+    );
+  });
+
+  it("skips the startup init when an index already exists", async () => {
+    pi.exec.mockImplementation((_cmd, args) =>
+      Promise.resolve(
+        args[0] === "status"
+          ? { stdout: INDEXED_STATUS, stderr: "", code: 0 }
+          : { stdout: "", stderr: "", code: 0 },
+      ),
+    );
+    await pi.trigger("session_start", makeSessionStartEvent(), ctx);
+    expect(pi.exec).not.toHaveBeenCalledWith(
+      "colgrep",
+      ["init", "-y", "."],
+      expect.anything(),
     );
   });
 
@@ -243,7 +265,13 @@ describe("extension — session_start background indexing (#389)", () => {
   beforeEach(() => {
     pi = new TestPi();
     ctx = makeCtx();
-    pi.exec.mockResolvedValue({ stdout: "", stderr: "", code: 0 });
+    pi.exec.mockImplementation((_cmd, args) =>
+      Promise.resolve(
+        args[0] === "status"
+          ? { stdout: NO_INDEX_STATUS, stderr: "", code: 0 }
+          : { stdout: "", stderr: "", code: 0 },
+      ),
+    );
     piColGrepExtension(pi.asExtensionAPI());
   });
 
@@ -254,6 +282,13 @@ describe("extension — session_start background indexing (#389)", () => {
       if (args[0] === "init") {
         return new Promise((resolve) => {
           resolveInit = () => resolve({ stdout: "", stderr: "", code: 0 });
+        });
+      }
+      if (args[0] === "status") {
+        return Promise.resolve({
+          stdout: NO_INDEX_STATUS,
+          stderr: "",
+          code: 0,
         });
       }
       return Promise.resolve({ stdout: "", stderr: "", code: 0 });
