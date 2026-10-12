@@ -1,5 +1,15 @@
 # Changelog
 
+## 3.3.1 — search timeout safety net
+
+- Every search exec is now capped at 180 s (runaway auto-index guard):
+  pathological directories (huge dump folders, e.g. `wtest/dbg2` with ~700k
+  entries) can no longer block a tool call forever. Exec rejections/timeouts
+  become an actionable error instead of an infinite wait.
+- `.mesh` and `**/dbg*` added to the machine's colgrep `extra_ignore` (see
+  `~/Library/Application Support/colgrep/config.json`).
+- +2 tests (213 total).
+
 ## 3.3.0 — index-build resilience
 
 - Searches wait for the session's in-flight reindex instead of racing it

@@ -1,7 +1,7 @@
 import type { Mock } from "vitest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Exec } from "#src/lib/exec";
-import { runSearch } from "#src/lib/search";
+import { runSearch, SEARCH_TIMEOUT_MS } from "#src/lib/search";
 
 const cwd = "/project";
 
@@ -149,5 +149,25 @@ describe("runSearch — index rebuild contention", () => {
     });
     expect(result).toEqual({ error: "boom" });
     expect(exec).toHaveBeenCalledTimes(1);
+  });
+
+  it("caps each attempt with the default search timeout", async () => {
+    exec.mockResolvedValue({ stdout: "[]", stderr: "", code: 0 });
+    await runSearch(exec, { query: "q" }, "/repo");
+    expect(exec).toHaveBeenCalledWith(
+      "colgrep",
+      expect.any(Array),
+      expect.objectContaining({ timeout: SEARCH_TIMEOUT_MS }),
+    );
+  });
+
+  it("turns an exec rejection into an actionable error", async () => {
+    exec.mockRejectedValue(new Error("exec timed out"));
+    const result = await runSearch(exec, { query: "q" }, "/repo", undefined, {
+      timeoutMs: 1_000,
+      sleep: async () => {},
+    });
+    expect(result.error).toContain("colgrep search failed");
+    expect(result.error).toContain("exec timed out");
   });
 });

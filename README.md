@@ -130,8 +130,11 @@ Config files (project overrides global, per section):
 - A real search auto-indexes on demand regardless. While an index build is in
   progress (own session or another agent's), the tool **waits or retries**
   (exponential backoff, up to 2 min) rather than failing and suggesting grep.
-- Large directories with volatile content (e.g. `.mesh/`) should be added to
-  colgrep's `extra_ignore` in `~/Library/Application Support/colgrep/config.json`.
+  Each search attempt is capped at **3 minutes** (runaway auto-index guard) —
+  pathological directories (huge dump folders) cannot block a call forever.
+- Large directories with volatile content (e.g. `.mesh/`, `**/dbg*` dumps)
+  should be added to colgrep's `extra_ignore` in
+  `~/Library/Application Support/colgrep/config.json`.
 
 ## Credits & license
 
