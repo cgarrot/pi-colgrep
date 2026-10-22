@@ -62,6 +62,10 @@ default search tool.
 
 At least one of `query` or `regex` is required.
 
+Each call carries a **timer**, like Pi's built-in tools: a live counter while
+the search runs (`colgrep "auth" in . · Elapsed 4.2s`, refreshed every second)
+and the total duration once it is done (`Took 4.3s` under the result).
+
 ### `colgrep_agent` — delegated code localization
 
 | Parameter  | Description                                             |
@@ -71,6 +75,7 @@ At least one of `query` or `regex` is required.
 
 Returns `file:START-END` locations plus a one-line meta summary (turns · searches · seconds).
 Typically 20–90 s; runs on the local GPU (Metal). One run at a time per session by default.
+The call line shows a live `Elapsed` counter while the agent works.
 
 ## colgrep-first policy
 

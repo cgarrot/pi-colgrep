@@ -1,5 +1,19 @@
 # Changelog
 
+## 3.6.0 — tool-call timer (Elapsed / Took)
+
+- The `colgrep` call now shows a **live timer** while the search runs
+  (`colgrep "auth" in . · Elapsed 4.2s`, refreshed every second) and the
+  **total duration** once it is done (`Took 4.3s`, under the result), exactly
+  like Pi's built-in tools.
+- Same live counter on `colgrep_agent` — a 20–90 s run is now visibly
+  progressing instead of looking frozen.
+- The helpers mirror Pi's `startToolTimer` / `toolTimerText` /
+  `formatToolDuration` (not exported from the package root, so they are
+  re-implemented in `src/lib/timer.ts`): Pi's recorded duration wins for the
+  final line, the renderer's own clock is the fallback.
+- Tests: +18 (294 total).
+
 ## 3.5.0 — index size guard + live progress widget
 
 - **Cold-build size guard**: directories with more than `indexing.maxFiles`

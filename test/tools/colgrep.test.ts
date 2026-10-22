@@ -221,12 +221,27 @@ describe("executeColGrepSearch", () => {
 
 // ---- renderResult ----
 
+interface RenderContext {
+  isError: boolean;
+  lastComponent: unknown;
+  state: Record<string, unknown>;
+  invalidate: () => void;
+  executionStarted: boolean;
+  isPartial: boolean;
+  durationMs?: number;
+}
+
 interface RenderableTool {
+  renderCall: (
+    args: Record<string, unknown>,
+    theme: unknown,
+    context: RenderContext,
+  ) => unknown;
   renderResult: (
     result: unknown,
     options: { expanded: boolean; isPartial: boolean },
     theme: unknown,
-    context: { isError: boolean; lastComponent: unknown },
+    context: RenderContext,
   ) => unknown;
 }
 
@@ -242,19 +257,51 @@ function captureTool(): RenderableTool {
 
 const stubTheme = {
   fg: (color: string, text: string) => `<${color}>${text}`,
+  bold: (text: string) => text,
 };
+
+function makeContext(overrides: Partial<RenderContext> = {}): RenderContext {
+  return {
+    isError: false,
+    lastComponent: undefined,
+    state: {},
+    invalidate: vi.fn(),
+    executionStarted: false,
+    isPartial: false,
+    durationMs: undefined,
+    ...overrides,
+  };
+}
 
 function render(
   result: unknown,
-  options: { expanded: boolean },
+  options: { expanded: boolean; isPartial?: boolean },
   isError: boolean,
+  overrides: Partial<RenderContext> = {},
 ): string {
   const setText = vi.fn<(text: string) => void>();
   captureTool().renderResult(
     result,
-    { ...options, isPartial: false },
+    { expanded: options.expanded, isPartial: options.isPartial ?? false },
     stubTheme,
-    { isError, lastComponent: { setText } },
+    makeContext({ ...overrides, isError, lastComponent: { setText } }),
+  );
+  return setText.mock.calls[0][0];
+}
+
+function renderCall(
+  args: Record<string, unknown>,
+  overrides: Partial<RenderContext> = {},
+): string {
+  const setText = vi.fn<(text: string) => void>();
+  captureTool().renderCall(
+    args,
+    stubTheme,
+    makeContext({
+      ...overrides,
+      isPartial: overrides.isPartial ?? true,
+      lastComponent: { setText },
+    }),
   );
   return setText.mock.calls[0][0];
 }
@@ -340,6 +387,107 @@ describe("renderResult", () => {
     const text = render(errorResult, { expanded: true }, true);
     expect(text).toContain("colgrep is not installed or not available.");
     expect(text).toContain("Install it from: https://example.test");
+  });
+});
+
+// ---- timer ----
+
+describe("tool timer", () => {
+  const hitResult = {
+    content: [{ type: "text", text: "a.ts:1" }],
+    details: { hitCount: 1, truncated: false },
+  };
+
+  it("shows a live elapsed counter on the call line while the search runs", () => {
+    const text = renderCall(
+      { query: "auth" },
+      {
+        executionStarted: true,
+        isPartial: true,
+        state: { startedAt: Date.now() - 2300 },
+      },
+    );
+    expect(text).toContain("colgrep");
+    expect(text).toContain("Elapsed 2.3s");
+  });
+
+  it("shows no counter before the execution started", () => {
+    const text = renderCall({ query: "auth" }, { executionStarted: false });
+    expect(text).not.toContain("Elapsed");
+  });
+
+  it("drops the live counter once the result is final", () => {
+    const text = renderCall(
+      { query: "auth" },
+      {
+        executionStarted: true,
+        isPartial: false,
+        state: { startedAt: Date.now() - 2300 },
+      },
+    );
+    expect(text).not.toContain("Elapsed");
+  });
+
+  it("shows the total duration under the final result", () => {
+    const text = render(
+      hitResult,
+      { expanded: false },
+      false,
+      { executionStarted: true, durationMs: 4200 },
+    );
+    expect(text).toContain("Took 4.2s");
+  });
+
+  it("shows the total duration under an error result", () => {
+    const text = render(
+      {
+        content: [{ type: "text", text: "colgrep is at capacity." }],
+        details: undefined,
+      },
+      { expanded: false },
+      true,
+      { executionStarted: true, durationMs: 30_000 },
+    );
+    expect(text).toContain("Took 30.0s");
+  });
+
+  it("falls back to the renderer's own clock when Pi recorded no duration", () => {
+    const text = render(
+      hitResult,
+      { expanded: false },
+      false,
+      { executionStarted: true, state: { startedAt: Date.now() - 1500 } },
+    );
+    expect(text).toContain("Took 1.5s");
+  });
+
+  it("shows no duration when the call never ran", () => {
+    const text = render(hitResult, { expanded: false }, false);
+    expect(text).not.toContain("Took");
+  });
+
+  it("keeps counting up as the row is redrawn", () => {
+    vi.useFakeTimers();
+    const state: Record<string, unknown> = {};
+    const invalidate = vi.fn();
+    const overrides = {
+      executionStarted: true,
+      isPartial: true,
+      state,
+      invalidate,
+    };
+
+    const first = renderCall({ query: "auth" }, overrides);
+    expect(first).toContain("Elapsed 0.0s");
+
+    // The ticker redraws the row once per second.
+    vi.advanceTimersByTime(2000);
+    expect(invalidate).toHaveBeenCalledTimes(2);
+
+    const second = renderCall({ query: "auth" }, overrides);
+    expect(second).toContain("Elapsed 2.0s");
+
+    vi.useRealTimers();
   });
 });
 

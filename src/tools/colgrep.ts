@@ -23,6 +23,12 @@ import {
 import { isUnsafeIndexRoot, unsafeRootMessage } from "#src/lib/paths";
 import { runSearch } from "#src/lib/search";
 import type { SlotRunner } from "#src/lib/slots";
+import {
+  runningTimerText,
+  startToolTimer,
+  toolTimerText,
+  type ToolTimerContext,
+} from "#src/lib/timer";
 import { err, ok, previewBlock } from "#src/tool-result";
 
 export interface ColGrepToolDetails {
@@ -204,15 +210,24 @@ export function registerColGrep(
       ),
     }),
     renderCall(args, theme, context) {
+      startToolTimer(context);
       const text =
         (context.lastComponent as Text | undefined) ?? new Text("", 0, 0);
-      text.setText(formatCall(args, theme));
+      text.setText(formatCall(args, theme, context));
       return text;
     },
     renderResult(result, options, theme, context) {
       const text =
         (context.lastComponent as Text | undefined) ?? new Text("", 0, 0);
-      text.setText(formatResult(result, options, theme, context.isError));
+      text.setText(
+        formatResult(
+          result,
+          options,
+          theme,
+          context.isError,
+          options.isPartial ? undefined : toolTimerText(context, false),
+        ),
+      );
       return text;
     },
     async execute(
@@ -229,7 +244,11 @@ export function registerColGrep(
 
 // ---- rendering helpers ----
 
-function formatCall(args: Record<string, unknown>, theme: Theme): string {
+function formatCall(
+  args: Record<string, unknown>,
+  theme: Theme,
+  context: ToolTimerContext,
+): string {
   const query = typeof args.query === "string" ? args.query : undefined;
   const regex = typeof args.regex === "string" ? args.regex : undefined;
   const path = typeof args.path === "string" ? args.path : ".";
@@ -241,6 +260,10 @@ function formatCall(args: Record<string, unknown>, theme: Theme): string {
   parts.push(
     theme.fg("toolOutput", `in ${path}${limit !== undefined ? ` (k=${limit})` : ""}`),
   );
+  // Live counter while the search is still running ("Elapsed 2.3s"): the row
+  // is redrawn once per second until the result arrives.
+  const elapsed = runningTimerText(context);
+  if (elapsed) parts.push(theme.fg("muted", `· ${elapsed}`));
   return parts.join(" ");
 }
 
@@ -254,22 +277,25 @@ function formatResult(
   options: { expanded: boolean },
   theme: Theme,
   isError: boolean,
+  timerText?: string,
 ): string {
   const r = result as AnyToolResult;
   const details = r.details;
   const hitCount = details?.hitCount ?? 0;
   const outputText =
     r.content[0]?.type === "text" ? (r.content[0].text ?? "") : "";
+  // Timing line, like Pi's built-in tools: "Took 2.3s" under the result.
+  const timerLine = timerText ? `\n${theme.fg("muted", timerText)}` : "";
 
   if (!options.expanded && isError) {
     const firstLine = outputText.split("\n")[0] ?? "";
-    return `${theme.fg("error", "✗")} ${theme.fg("error", firstLine)}`;
+    return `${theme.fg("error", "✗")} ${theme.fg("error", firstLine)}${timerLine}`;
   }
 
   if (!options.expanded) {
     const icon = theme.fg("success", "✓");
     if (hitCount === 0) {
-      return `${icon} ${theme.fg("muted", "no matches")}`;
+      return `${icon} ${theme.fg("muted", "no matches")}${timerLine}`;
     }
     const count = theme.fg(
       "muted",
@@ -279,13 +305,13 @@ function formatResult(
       ? theme.fg("warning", " (truncated)")
       : "";
     const lines = outputText.split("\n").filter((line) => line !== "");
-    return `${icon} ${count}${truncated}${previewBlock(lines, theme)}`;
+    return `${icon} ${count}${truncated}${previewBlock(lines, theme)}${timerLine}`;
   }
 
   const lines = outputText
     .split("\n")
     .map((l: string) => theme.fg("toolOutput", `  ${l}`));
-  return lines.join("\n");
+  return `${lines.join("\n")}${timerLine}`;
 }
 
 // ---- private helpers ----

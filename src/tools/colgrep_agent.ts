@@ -32,6 +32,11 @@ import type { AvailabilityState } from "#src/lib/availability";
 import type { Exec } from "#src/lib/exec";
 import { isUnsafeIndexRoot, unsafeRootMessage } from "#src/lib/paths";
 import type { SlotRunner } from "#src/lib/slots";
+import {
+  runningTimerText,
+  startToolTimer,
+  type ToolTimerContext,
+} from "#src/lib/timer";
 import { err, ok, previewBlock } from "#src/tool-result";
 
 export interface ColGrepAgentDetails {
@@ -201,8 +206,12 @@ export function registerColGrepAgent(
         }),
       ),
     }),
-    renderCall(args, theme) {
-      return new Text(formatCall(args, theme), 0, 0);
+    renderCall(args, theme, context) {
+      startToolTimer(context);
+      const text =
+        (context.lastComponent as Text | undefined) ?? new Text("", 0, 0);
+      text.setText(formatCall(args, theme, context));
+      return text;
     },
     renderResult(result, options, theme, context) {
       const text =
@@ -246,7 +255,11 @@ export function registerColGrepAgent(
 
 // ---- rendering helpers ----
 
-function formatCall(args: Record<string, unknown>, theme: Theme): string {
+function formatCall(
+  args: Record<string, unknown>,
+  theme: Theme,
+  context: ToolTimerContext,
+): string {
   const question = typeof args.question === "string" ? args.question : "";
   const path = typeof args.path === "string" ? args.path : undefined;
   const parts: string[] = [
@@ -254,6 +267,10 @@ function formatCall(args: Record<string, unknown>, theme: Theme): string {
     theme.fg("accent", `"${question}"`),
   ];
   if (path) parts.push(theme.fg("toolOutput", `in ${path}`));
+  // Live counter while the agent is still running ("Elapsed 12.3s"): the run
+  // takes 20-90 s, so the operator wants to see it progressing.
+  const elapsed = runningTimerText(context);
+  if (elapsed) parts.push(theme.fg("muted", `· ${elapsed}`));
   return parts.join(" ");
 }
 
